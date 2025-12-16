@@ -446,14 +446,15 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
             - entry_price: Initial option price
             - exit_price: Final option price when limit triggered
             - exit_time: Time when position was closed
-            - exit_reason: 'stoploss', 'takeprofit', or 'expiration'
+            - exit_reason: 'stoploss', 'takeprofit', 'expiration', or 'position_open'
             - pnl_percent: Profit/loss percentage
             - pnl_dollar: Profit/loss in dollars (per contract)
             - days_held: Number of days position was held
 
-    Note: Monitors across multiple days until stop-loss, take-profit, or expiration.
+    Note: Monitors across multiple days until stop-loss, take-profit, expiration, or current date.
           Uses intraday (hourly) monitoring for dates within last 60 days,
-          otherwise uses end-of-day prices.
+          otherwise uses end-of-day prices. If monitoring reaches current date with position
+          still open, returns with exit_reason='position_open'.
     """
     from datetime import datetime, timedelta
     import pytz
@@ -476,6 +477,9 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
     entry_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
     expiration_date = datetime.strptime(strike_date, "%Y-%m-%d")
 
+    # Get current date (don't fetch data beyond this)
+    today = datetime.now().date()
+
     # Check if we can use intraday data (within 60 days)
     days_ago = (datetime.now() - entry_datetime).days
     use_intraday = days_ago <= 60
@@ -486,8 +490,8 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
     print(f"\nMonitoring position from {date} until expiration ({strike_date})...")
     print("-" * 60)
 
-    # Monitor each day until expiration
-    while current_date <= expiration_date:
+    # Monitor each day until expiration or current date
+    while current_date <= expiration_date and current_date.date() <= today:
         current_date_str = current_date.strftime("%Y-%m-%d")
 
         # Skip weekends (yfinance won't have data)
@@ -562,6 +566,7 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
 
                 except Exception as e:
                     print(f" - Error: {e}")
+                    continue  # Skip this hour if data unavailable
         else:
             # End-of-day monitoring only
             try:
@@ -608,25 +613,67 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
 
             except Exception as e:
                 print(f"  Error: {e}")
+                # Continue to next day even if EOD data unavailable
 
         # Move to next day
         current_date += timedelta(days=1)
 
-    # Reached expiration without hitting limits
-    print(f"\nOption expired at {strike_date}")
-    exit_price = option_price_historical(ticker_symbol, strike_date, strike_price,
-                                        option_type, strike_date, iv)
+    # Exited loop - determine why
+    if current_date.date() > today:
+        # Reached current date boundary - position still open
+        print(f"\nReached current date ({today}). Position still open.")
 
-    days_held = (expiration_date - datetime.strptime(date, "%Y-%m-%d")).days
-    pnl_percent = ((exit_price - entry_price) / entry_price) * 100
-    pnl_dollar = (exit_price - entry_price) * 100
+        # Try to get the most recent price
+        try:
+            last_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
+            # Skip weekends for last price check
+            last_check = current_date - timedelta(days=1)
+            while last_check.weekday() >= 5:
+                last_check -= timedelta(days=1)
+            last_date_str = last_check.strftime("%Y-%m-%d")
 
-    return {
-        'entry_price': round(entry_price, 2),
-        'exit_price': round(exit_price, 2),
-        'exit_time': f"{strike_date} 16:00",
-        'exit_reason': 'expiration',
-        'pnl_percent': round(pnl_percent, 2),
-        'pnl_dollar': round(pnl_dollar, 2),
-        'days_held': days_held
-    }
+            # Try intraday first if available, otherwise EOD
+            days_from_now = (datetime.now() - last_check).days
+            if days_from_now <= 60:
+                last_price = option_price_intraday(ticker_symbol, strike_date, strike_price,
+                                                   option_type, last_date_str, "16:00", iv)
+            else:
+                last_price = option_price_historical(ticker_symbol, strike_date, strike_price,
+                                                     option_type, last_date_str, iv)
+        except Exception as e:
+            print(f"Warning: Could not fetch last price. Using entry price. Error: {e}")
+            last_price = entry_price
+            last_date_str = date
+
+        days_held = (last_check - datetime.strptime(date, "%Y-%m-%d")).days
+        pnl_percent = ((last_price - entry_price) / entry_price) * 100
+        pnl_dollar = (last_price - entry_price) * 100
+
+        return {
+            'entry_price': round(entry_price, 2),
+            'exit_price': round(last_price, 2),
+            'exit_time': f"{last_date_str} (current)",
+            'exit_reason': 'position_open',
+            'pnl_percent': round(pnl_percent, 2),
+            'pnl_dollar': round(pnl_dollar, 2),
+            'days_held': days_held
+        }
+    else:
+        # Reached expiration without hitting limits
+        print(f"\nOption expired at {strike_date}")
+        exit_price = option_price_historical(ticker_symbol, strike_date, strike_price,
+                                            option_type, strike_date, iv)
+
+        days_held = (expiration_date - datetime.strptime(date, "%Y-%m-%d")).days
+        pnl_percent = ((exit_price - entry_price) / entry_price) * 100
+        pnl_dollar = (exit_price - entry_price) * 100
+
+        return {
+            'entry_price': round(entry_price, 2),
+            'exit_price': round(exit_price, 2),
+            'exit_time': f"{strike_date} 16:00",
+            'exit_reason': 'expiration',
+            'pnl_percent': round(pnl_percent, 2),
+            'pnl_dollar': round(pnl_dollar, 2),
+            'days_held': days_held
+        }
