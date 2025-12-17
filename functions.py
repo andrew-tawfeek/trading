@@ -4,8 +4,10 @@ from py_vollib.black_scholes import black_scholes
 import numpy as np
 from datetime import datetime, timedelta
 from technical_retrievals import *
+import pandas as pd
+import os
 
-def greeks(ticker_symbol, strike_date, strike_price, option_type):
+def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False):
     assert option_type in ['put', 'call'], "option_type must be 'put' or 'call'"
 
     days = countdown(strike_date)
@@ -677,3 +679,174 @@ def options_purchase(ticker_symbol, strike_date, strike_price, date, time,
             'pnl_dollar': round(pnl_dollar, 2),
             'days_held': days_held
         }
+
+
+def import_tickers_from_csv(csv_file='nasdaq_tickers.csv'):
+    """
+    Import ticker data from CSV file.
+
+    Args:
+        csv_file (str): Path to the CSV file (default: 'nasdaq_tickers.csv')
+
+    Returns:
+        pandas.DataFrame: DataFrame containing all ticker information
+
+    Raises:
+        FileNotFoundError: If the CSV file doesn't exist
+    """
+    if not os.path.exists(csv_file):
+        raise FileNotFoundError(f"CSV file '{csv_file}' not found. Please run fetch_nasdaq_tickers.py first.")
+
+    df = pd.read_csv(csv_file)
+    print(f"Loaded {len(df)} tickers from {csv_file}")
+    print(f"\nColumns: {', '.join(df.columns.tolist())}")
+    print(f"\nSector breakdown:")
+    print(df['Sector'].value_counts())
+
+    return df
+
+
+def update(csv_file='nasdaq_tickers.csv', save_backup=True):
+    """
+    Update all ticker data in the CSV file with latest market prices and information.
+
+    Args:
+        csv_file (str): Path to the CSV file to update (default: 'nasdaq_tickers.csv')
+        save_backup (bool): Whether to save a backup before updating (default: True)
+
+    Returns:
+        pandas.DataFrame: Updated DataFrame with current market data
+
+    This function:
+    - Reads the existing CSV file
+    - Fetches latest data for each ticker
+    - Updates: Last Price, Volume, 52 Week High/Low, Market Cap, P/E, etc.
+    - Saves the updated data back to CSV
+    """
+    import time
+
+    if not os.path.exists(csv_file):
+        raise FileNotFoundError(f"CSV file '{csv_file}' not found. Please run fetch_nasdaq_tickers.py first.")
+
+    # Load existing data
+    df = pd.read_csv(csv_file)
+    print(f"Loaded {len(df)} tickers from {csv_file}")
+
+    # Save backup if requested
+    if save_backup:
+        backup_file = csv_file.replace('.csv', f'_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
+        df.to_csv(backup_file, index=False)
+        print(f"Backup saved to {backup_file}")
+
+    print(f"\nUpdating ticker data...")
+    print("-" * 60)
+
+    updated_count = 0
+    failed_count = 0
+    failed_tickers = []
+
+    for index, row in df.iterrows():
+        ticker_symbol = row['Ticker']
+
+        try:
+            print(f"[{index+1}/{len(df)}] Updating {ticker_symbol}...", end=' ')
+
+            ticker = yf.Ticker(ticker_symbol)
+            info = ticker.info
+            hist = ticker.history(period='5d')
+
+            if len(hist) == 0:
+                print("No price data - skipped")
+                failed_count += 1
+                failed_tickers.append(ticker_symbol)
+                continue
+
+            last_price = hist['Close'].iloc[-1]
+
+            # Update the row with latest data
+            df.at[index, 'Last Price'] = round(last_price, 2)
+            df.at[index, 'Volume'] = int(hist['Volume'].iloc[-1])
+            df.at[index, 'Market Cap'] = info.get('marketCap', df.at[index, 'Market Cap'])
+            df.at[index, '52 Week High'] = info.get('fiftyTwoWeekHigh', df.at[index, '52 Week High'])
+            df.at[index, '52 Week Low'] = info.get('fiftyTwoWeekLow', df.at[index, '52 Week Low'])
+            df.at[index, 'Average Volume'] = info.get('averageVolume', df.at[index, 'Average Volume'])
+            df.at[index, 'P/E Ratio'] = info.get('trailingPE', df.at[index, 'P/E Ratio'])
+            df.at[index, 'Dividend Yield'] = info.get('dividendYield', df.at[index, 'Dividend Yield'])
+            df.at[index, 'Beta'] = info.get('beta', df.at[index, 'Beta'])
+            df.at[index, 'Last Updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            print(f"${last_price:.2f} ✓")
+            updated_count += 1
+
+            # Rate limiting
+            if (index + 1) % 10 == 0:
+                time.sleep(1)
+
+        except Exception as e:
+            print(f"Error: {str(e)[:50]}")
+            failed_count += 1
+            failed_tickers.append(ticker_symbol)
+            continue
+
+    # Save updated data
+    df.to_csv(csv_file, index=False)
+
+    print("-" * 60)
+    print(f"\nUpdate complete!")
+    print(f"Successfully updated: {updated_count} tickers")
+    print(f"Failed to update: {failed_count} tickers")
+
+    if failed_tickers:
+        print(f"\nFailed tickers: {', '.join(failed_tickers[:20])}")
+        if len(failed_tickers) > 20:
+            print(f"... and {len(failed_tickers) - 20} more")
+
+    print(f"\nUpdated data saved to {csv_file}")
+
+    return df
+
+
+def get_ticker_info(ticker_symbol, csv_file='nasdaq_tickers.csv'):
+    """
+    Get information for a specific ticker from the CSV file.
+
+    Args:
+        ticker_symbol (str): The ticker symbol to look up (e.g., 'AAPL')
+        csv_file (str): Path to the CSV file (default: 'nasdaq_tickers.csv')
+
+    Returns:
+        dict: Dictionary containing all information for the ticker
+        None: If ticker not found
+    """
+    if not os.path.exists(csv_file):
+        raise FileNotFoundError(f"CSV file '{csv_file}' not found.")
+
+    df = pd.read_csv(csv_file)
+    ticker_data = df[df['Ticker'] == ticker_symbol.upper()]
+
+    if len(ticker_data) == 0:
+        print(f"Ticker '{ticker_symbol}' not found in {csv_file}")
+        return None
+
+    return ticker_data.iloc[0].to_dict()
+
+
+def filter_tickers_by_sector(sector, csv_file='nasdaq_tickers.csv'):
+    """
+    Filter tickers by sector.
+
+    Args:
+        sector (str): Sector name (e.g., 'Technology', 'Healthcare')
+        csv_file (str): Path to the CSV file (default: 'nasdaq_tickers.csv')
+
+    Returns:
+        pandas.DataFrame: DataFrame containing tickers from the specified sector
+    """
+    if not os.path.exists(csv_file):
+        raise FileNotFoundError(f"CSV file '{csv_file}' not found.")
+
+    df = pd.read_csv(csv_file)
+    filtered = df[df['Sector'].str.contains(sector, case=False, na=False)]
+
+    print(f"Found {len(filtered)} tickers in sector '{sector}'")
+    return filtered
