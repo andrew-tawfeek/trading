@@ -141,10 +141,11 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
         # VEGA ANALYSIS
         if not silent:
             print(f"\nVEGA ANALYSIS")
-        print(f"   P&L per 1% IV Change: ${v:.2f}")
+            print(f"   P&L per 1% IV Change: ${v:.2f}")
         
         vega_exposure = "Long Volatility" if v > 0 else "Short Volatility"
-        print(f"   Volatility Exposure: {vega_exposure}")
+        if not silent:
+            print(f"   Volatility Exposure: {vega_exposure}")
         
         # Vega as percentage of option value (approximate)
         if abs(v) < 0.05:
