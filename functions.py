@@ -8,7 +8,7 @@ import pandas as pd
 import os
 
 
-def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False):
+def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False, silent = False):
     assert option_type in ['put', 'call'], "option_type must be 'put' or 'call'"
 
     days = countdown(strike_date)
@@ -44,16 +44,18 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
     greeks_dict = {'delta': float(d), 'gamma': float(g), 'vega': float(v), 'theta': float(th), 'rho': float(r)}
     
     if status:
-        print("\n" + "="*70)
-        print(f"GREEKS ANALYSIS: {ticker_symbol} {option_type.upper()} ${K} exp {strike_date}")
-        print("="*70)
+        if not silent:
+            print("\n" + "="*70)
+            print(f"GREEKS ANALYSIS: {ticker_symbol} {option_type.upper()} ${K} exp {strike_date}")
+            print("="*70)
         
         # Basic Information
-        print(f"\nCURRENT MARKET DATA")
-        print(f"   Stock Price: ${S:.2f}")
-        print(f"   Strike Price: ${K:.2f}")
-        print(f"   Days to Expiration: {days}")
-        print(f"   Implied Volatility: {IV*100:.2f}%")
+        if not silent:
+            print(f"\nCURRENT MARKET DATA")
+            print(f"   Stock Price: ${S:.2f}")
+            print(f"   Strike Price: ${K:.2f}")
+            print(f"   Days to Expiration: {days}")
+            print(f"   Implied Volatility: {IV*100:.2f}%")
         
         # Moneyness
         moneyness_pct = ((S - K) / K) * 100
@@ -72,21 +74,24 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             else:
                 moneyness = f"OTM (Out-of-The-Money) by ${S-K:.2f} ({moneyness_pct:.2f}%)"
         
-        print(f"   Moneyness: {moneyness}")
+        if not silent:
+            print(f"   Moneyness: {moneyness}")
         
         # Raw Greeks
-        print(f"\nRAW GREEKS VALUES")
-        print(f"   Delta (Δ):   {d:>8.4f}")
-        print(f"   Gamma (Γ):   {g:>8.4f}")
-        print(f"   Vega (ν):    {v:>8.4f}")
-        print(f"   Theta (Θ):   {th:>8.4f}")
-        print(f"   Rho (ρ):     {r:>8.4f}")
+        if not silent:
+            print(f"\nRAW GREEKS VALUES")
+            print(f"   Delta (Δ):   {d:>8.4f}")
+            print(f"   Gamma (Γ):   {g:>8.4f}")
+            print(f"   Vega (ν):    {v:>8.4f}")
+            print(f"   Theta (Θ):   {th:>8.4f}")
+            print(f"   Rho (ρ):     {r:>8.4f}")
         
         # DELTA ANALYSIS
-        print(f"\nDELTA ANALYSIS")
         delta_prob = abs(d) * 100
-        print(f"   Probability of Expiring ITM: ~{delta_prob:.1f}%")
-        print(f"   Equivalent Share Position: {d*100:.2f} shares")
+        if not silent:
+            print(f"\nDELTA ANALYSIS")
+            print(f"   Probability of Expiring ITM: ~{delta_prob:.1f}%")
+            print(f"   Equivalent Share Position: {d*100:.2f} shares")
         
         if abs(d) < 0.25:
             delta_class = "Deep OTM - Low directional exposure"
@@ -98,17 +103,20 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             delta_class = "ITM - Strong directional exposure"
         else:
             delta_class = "Deep ITM - Very strong directional exposure"
-        print(f"   Delta Classification: {delta_class}")
+        if not silent:
+            print(f"   Delta Classification: {delta_class}")
         
         if option_type == 'call':
             delta_direction = "Bullish" if d > 0 else "Neutral/Bearish"
         else:
             delta_direction = "Bearish" if d < 0 else "Neutral/Bullish"
-        print(f"   Direction: {delta_direction}")
+        if not silent:
+            print(f"   Direction: {delta_direction}")
         
         # GAMMA ANALYSIS
-        print(f"\nGAMMA ANALYSIS")
-        print(f"   Delta Change per $1 Move: {g:.4f}")
+        if not silent:
+            print(f"\nGAMMA ANALYSIS")
+            print(f"   Delta Change per $1 Move: {g:.4f}")
         
         gamma_normalized = g * S  # Normalize by stock price
         if gamma_normalized < 0.01:
@@ -119,17 +127,20 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             gamma_risk = "High - Significant delta changes expected"
         else:
             gamma_risk = "Very High - Extreme delta sensitivity"
-        print(f"   Gamma Risk Level: {gamma_risk}")
+        if not silent:
+            print(f"   Gamma Risk Level: {gamma_risk}")
         
         # Distance from maximum gamma (ATM)
         distance_from_atm = abs(S - K) / S * 100
-        print(f"   Distance from Max Gamma (ATM): {distance_from_atm:.2f}%")
+        if not silent:
+            print(f"   Distance from Max Gamma (ATM): {distance_from_atm:.2f}%")
         
-        if days < 10 and distance_from_atm < 5:
+        if days < 10 and distance_from_atm < 5 and not silent:
             print(f"   WARNING: High gamma risk near expiration!")
         
         # VEGA ANALYSIS
-        print(f"\nVEGA ANALYSIS")
+        if not silent:
+            print(f"\nVEGA ANALYSIS")
         print(f"   P&L per 1% IV Change: ${v:.2f}")
         
         vega_exposure = "Long Volatility" if v > 0 else "Short Volatility"
@@ -144,21 +155,24 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             vega_class = "High IV Sensitivity"
         else:
             vega_class = "Very High IV Sensitivity"
-        print(f"   Vega Classification: {vega_class}")
+        if not silent:
+            print(f"   Vega Classification: {vega_class}")
         
         # THETA ANALYSIS
-        print(f"\nTHETA ANALYSIS")
-        print(f"   Daily Time Decay: ${th:.2f}")
-        print(f"   Weekly Time Decay: ${th*7:.2f}")
-        print(f"   Monthly Time Decay (30d): ${th*30:.2f}")
+        if not silent:
+            print(f"\nTHETA ANALYSIS")
+            print(f"   Daily Time Decay: ${th:.2f}")
+            print(f"   Weekly Time Decay: ${th*7:.2f}")
+            print(f"   Monthly Time Decay (30d): ${th*30:.2f}")
         
         # Theta acceleration warning
-        if days < 30:
-            print(f"   WARNING: Entering theta acceleration zone (<30 DTE)")
-        if days < 14:
-            print(f"   WARNING: HIGH theta decay period (<14 DTE)")
-        if days < 7:
-            print(f"   WARNING: EXTREME theta decay period (<7 DTE)")
+        if not silent:
+            if days < 30:
+                print(f"   WARNING: Entering theta acceleration zone (<30 DTE)")
+            if days < 14:
+                print(f"   WARNING: HIGH theta decay period (<14 DTE)")
+            if days < 7:
+                print(f"   WARNING: EXTREME theta decay period (<7 DTE)")
         
         # Theta magnitude classification
         abs_theta = abs(th)
@@ -170,16 +184,19 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             theta_class = "High - Significant time decay"
         else:
             theta_class = "Very High - Severe time decay"
-        print(f"   Theta Classification: {theta_class}")
+        if not silent:
+            print(f"   Theta Classification: {theta_class}")
         
         # Break-even move to offset theta
         if abs(d) > 0.01:
             breakeven_move = abs(th / d)
-            print(f"   Stock Move to Offset Daily Theta: ${breakeven_move:.2f}")
+            if not silent:
+                print(f"   Stock Move to Offset Daily Theta: ${breakeven_move:.2f}")
         
         # RHO ANALYSIS
-        print(f"\nRHO ANALYSIS")
-        print(f"   P&L per 1% Rate Change: ${r:.2f}")
+        if not silent:
+            print(f"\nRHO ANALYSIS")
+            print(f"   P&L per 1% Rate Change: ${r:.2f}")
         
         # Rho is generally negligible for short-dated options
         if days < 90:
@@ -188,28 +205,34 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             rho_relevance = "Low (medium-dated option)"
         else:
             rho_relevance = "Moderate (long-dated option)"
-        print(f"   Interest Rate Sensitivity: {rho_relevance}")
+        if not silent:
+            print(f"   Interest Rate Sensitivity: {rho_relevance}")
         
         # RISK METRICS
-        print(f"\nRISK METRICS")
+        if not silent:
+            print(f"\nRISK METRICS")
         
         # Delta/Theta ratio (reward per day of time decay)
         if th != 0:
             delta_theta_ratio = abs(d / th)
-            print(f"   Delta/Theta Ratio: {delta_theta_ratio:.2f} (directional gain needed per $1 theta)")
+            if not silent:
+                print(f"   Delta/Theta Ratio: {delta_theta_ratio:.2f} (directional gain needed per $1 theta)")
         
         # Gamma/Vega ratio
         if v != 0:
             gamma_vega_ratio = abs(g / v)
-            print(f"   Gamma/Vega Ratio: {gamma_vega_ratio:.4f} (convexity vs volatility)")
+            if not silent:
+                print(f"   Gamma/Vega Ratio: {gamma_vega_ratio:.4f} (convexity vs volatility)")
         
         # Total Greek Risk Score (weighted combination)
         risk_score = (abs(d) * 0.3 + abs(g) * S * 0.3 + abs(v) * 0.2 + 
                       abs(th) * 10 * 0.15 + abs(r) * 0.05)
-        print(f"   Composite Risk Score: {risk_score:.2f}")
+        if not silent:
+            print(f"   Composite Risk Score: {risk_score:.2f}")
         
         # SENSITIVITY SCENARIOS
-        print(f"\nSENSITIVITY SCENARIOS")
+        if not silent:
+            print(f"\nSENSITIVITY SCENARIOS")
         
         # Stock price moves
         move_1pct = S * 0.01
@@ -223,31 +246,35 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
         pl_up_10 = d * move_10pct + 0.5 * g * move_10pct**2
         pl_down_10 = d * (-move_10pct) + 0.5 * g * (-move_10pct)**2
         
-        print(f"   Stock Move Scenarios:")
-        print(f"      +1% (${S + move_1pct:.2f}): P&L ≈ ${pl_up_1:.2f}")
-        print(f"      -1% (${S - move_1pct:.2f}): P&L ≈ ${pl_down_1:.2f}")
-        print(f"      +5% (${S + move_5pct:.2f}): P&L ≈ ${pl_up_5:.2f}")
-        print(f"      -5% (${S - move_5pct:.2f}): P&L ≈ ${pl_down_5:.2f}")
-        print(f"     +10% (${S + move_10pct:.2f}): P&L ≈ ${pl_up_10:.2f}")
-        print(f"     -10% (${S - move_10pct:.2f}): P&L ≈ ${pl_down_10:.2f}")
+        if not silent:
+            print(f"   Stock Move Scenarios:")
+            print(f"      +1% (${S + move_1pct:.2f}): P&L ≈ ${pl_up_1:.2f}")
+            print(f"      -1% (${S - move_1pct:.2f}): P&L ≈ ${pl_down_1:.2f}")
+            print(f"      +5% (${S + move_5pct:.2f}): P&L ≈ ${pl_up_5:.2f}")
+            print(f"      -5% (${S - move_5pct:.2f}): P&L ≈ ${pl_down_5:.2f}")
+            print(f"     +10% (${S + move_10pct:.2f}): P&L ≈ ${pl_up_10:.2f}")
+            print(f"     -10% (${S - move_10pct:.2f}): P&L ≈ ${pl_down_10:.2f}")
         
         # IV scenarios
-        print(f"   IV Change Scenarios:")
-        print(f"      +10% IV: P&L ≈ ${v * 10:.2f}")
-        print(f"      -10% IV: P&L ≈ ${-v * 10:.2f}")
-        print(f"      +25% IV: P&L ≈ ${v * 25:.2f}")
-        print(f"      -25% IV: P&L ≈ ${-v * 25:.2f}")
-        print(f"      +50% IV: P&L ≈ ${v * 50:.2f}")
-        print(f"      -50% IV: P&L ≈ ${-v * 50:.2f}")
+        if not silent:
+            print(f"   IV Change Scenarios:")
+            print(f"      +10% IV: P&L ≈ ${v * 10:.2f}")
+            print(f"      -10% IV: P&L ≈ ${-v * 10:.2f}")
+            print(f"      +25% IV: P&L ≈ ${v * 25:.2f}")
+            print(f"      -25% IV: P&L ≈ ${-v * 25:.2f}")
+            print(f"      +50% IV: P&L ≈ ${v * 50:.2f}")
+            print(f"      -50% IV: P&L ≈ ${-v * 50:.2f}")
         
         # Time decay scenarios
-        print(f"   Time Decay Scenarios:")
-        print(f"      After 1 day: P&L ≈ ${th:.2f}")
-        print(f"      After 1 week: P&L ≈ ${th * 7:.2f}")
-        print(f"      After 2 weeks: P&L ≈ ${th * 14:.2f}")
+        if not silent:
+            print(f"   Time Decay Scenarios:")
+            print(f"      After 1 day: P&L ≈ ${th:.2f}")
+            print(f"      After 1 week: P&L ≈ ${th * 7:.2f}")
+            print(f"      After 2 weeks: P&L ≈ ${th * 14:.2f}")
         
         # STOP-LOSS AND TAKE-PROFIT RECOMMENDATIONS
-        print(f"\nSTOP-LOSS & TAKE-PROFIT RECOMMENDATIONS")
+        if not silent:
+            print(f"\nSTOP-LOSS & TAKE-PROFIT RECOMMENDATIONS")
         
         # Get current option price (mid price as estimate)
         option_price = option.get('lastPrice', 0)
@@ -259,7 +286,8 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
                 option_price = (bid + ask) / 2
         
         if option_price > 0:
-            print(f"   Current Option Price: ${option_price:.2f}")
+            if not silent:
+                print(f"   Current Option Price: ${option_price:.2f}")
             
             # Stop-loss recommendations based on risk profile
             # Conservative: 20-30% loss
@@ -292,10 +320,11 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
                 sl_aggressive = option_price * 0.30    # 70% loss
                 stop_note = "(Standard risk profile)"
             
-            print(f"\n   Stop-Loss Levels {stop_note}:")
-            print(f"      Conservative (25-30% loss): ${sl_conservative:.2f}")
-            print(f"      Moderate (40-50% loss):     ${sl_moderate:.2f}")
-            print(f"      Aggressive (55-70% loss):   ${sl_aggressive:.2f}")
+            if not silent:
+                print(f"\n   Stop-Loss Levels {stop_note}:")
+                print(f"      Conservative (25-30% loss): ${sl_conservative:.2f}")
+                print(f"      Moderate (40-50% loss):     ${sl_moderate:.2f}")
+                print(f"      Aggressive (55-70% loss):   ${sl_aggressive:.2f}")
             
             # Take-profit recommendations
             # Based on risk-reward ratios and option characteristics
@@ -319,24 +348,27 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
                 tp_aggressive = option_price * 2.25    # 125% gain
                 tp_note = "(Balanced targets for ATM)"
             
-            print(f"\n   Take-Profit Levels {tp_note}:")
-            print(f"      Conservative (25-50% gain):  ${tp_conservative:.2f}")
-            print(f"      Moderate (50-100% gain):     ${tp_moderate:.2f}")
-            print(f"      Aggressive (100-200% gain):  ${tp_aggressive:.2f}")
+            if not silent:
+                print(f"\n   Take-Profit Levels {tp_note}:")
+                print(f"      Conservative (25-50% gain):  ${tp_conservative:.2f}")
+                print(f"      Moderate (50-100% gain):     ${tp_moderate:.2f}")
+                print(f"      Aggressive (100-200% gain):  ${tp_aggressive:.2f}")
             
             # Risk-reward ratios
             rr_conservative = (tp_conservative - option_price) / (option_price - sl_conservative)
             rr_moderate = (tp_moderate - option_price) / (option_price - sl_moderate)
             rr_aggressive = (tp_aggressive - option_price) / (option_price - sl_aggressive)
             
-            print(f"\n   Risk-Reward Ratios:")
-            print(f"      Conservative: {rr_conservative:.2f}:1")
-            print(f"      Moderate:     {rr_moderate:.2f}:1")
-            print(f"      Aggressive:   {rr_aggressive:.2f}:1")
+            if not silent:
+                print(f"\n   Risk-Reward Ratios:")
+                print(f"      Conservative: {rr_conservative:.2f}:1")
+                print(f"      Moderate:     {rr_moderate:.2f}:1")
+                print(f"      Aggressive:   {rr_aggressive:.2f}:1")
             
             # Underlying stock price levels for stop/target
             # Calculate what stock price would cause option to hit these levels
-            print(f"\n   Approximate Stock Price Levels:")
+            if not silent:
+                print(f"\n   Approximate Stock Price Levels:")
             
             # For stop-loss - estimate stock move needed
             # This is approximate: (stop_price - current_price) / delta
@@ -349,20 +381,21 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
                 stock_tp_moderate = S + (tp_moderate - option_price) / d
                 stock_tp_aggressive = S + (tp_aggressive - option_price) / d
                 
-                print(f"      Stop-Loss Stock Prices:")
-                print(f"         Conservative: ${stock_sl_conservative:.2f} ({((stock_sl_conservative/S - 1)*100):+.1f}%)")
-                print(f"         Moderate:     ${stock_sl_moderate:.2f} ({((stock_sl_moderate/S - 1)*100):+.1f}%)")
-                print(f"         Aggressive:   ${stock_sl_aggressive:.2f} ({((stock_sl_aggressive/S - 1)*100):+.1f}%)")
-                
-                print(f"      Take-Profit Stock Prices:")
-                print(f"         Conservative: ${stock_tp_conservative:.2f} ({((stock_tp_conservative/S - 1)*100):+.1f}%)")
-                print(f"         Moderate:     ${stock_tp_moderate:.2f} ({((stock_tp_moderate/S - 1)*100):+.1f}%)")
-                print(f"         Aggressive:   ${stock_tp_aggressive:.2f} ({((stock_tp_aggressive/S - 1)*100):+.1f}%)")
+                if not silent:
+                    print(f"      Stop-Loss Stock Prices:")
+                    print(f"         Conservative: ${stock_sl_conservative:.2f} ({((stock_sl_conservative/S - 1)*100):+.1f}%)")
+                    print(f"         Moderate:     ${stock_sl_moderate:.2f} ({((stock_sl_moderate/S - 1)*100):+.1f}%)")
+                    print(f"         Aggressive:   ${stock_sl_aggressive:.2f} ({((stock_sl_aggressive/S - 1)*100):+.1f}%)")
+                    
+                    print(f"      Take-Profit Stock Prices:")
+                    print(f"         Conservative: ${stock_tp_conservative:.2f} ({((stock_tp_conservative/S - 1)*100):+.1f}%)")
+                    print(f"         Moderate:     ${stock_tp_moderate:.2f} ({((stock_tp_moderate/S - 1)*100):+.1f}%)")
+                    print(f"         Aggressive:   ${stock_tp_aggressive:.2f} ({((stock_tp_aggressive/S - 1)*100):+.1f}%)")
             else:
-                print(f"      (Stock price estimates unavailable - delta too low)")
+                if not silent:
+                    print(f"      (Stock price estimates unavailable - delta too low)")
             
             # Add trailing stop recommendation
-            print(f"\n   Trailing Stop Recommendation:")
             if days > 30:
                 trailing_pct = 25
             elif days > 14:
@@ -370,15 +403,19 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             else:
                 trailing_pct = 15
             
-            print(f"      Trailing stop: {trailing_pct}% from peak")
-            print(f"      (Adjust tighter as expiration approaches)")
+            if not silent:
+                print(f"\n   Trailing Stop Recommendation:")
+                print(f"      Trailing stop: {trailing_pct}% from peak")
+                print(f"      (Adjust tighter as expiration approaches)")
             
         else:
-            print(f"   (Option price data unavailable for stop-loss/take-profit calculation)")
+            if not silent:
+                print(f"   (Option price data unavailable for stop-loss/take-profit calculation)")
 
         
         # PURCHASE RECOMMENDATION SCORE
-        print(f"\nPURCHASE RECOMMENDATION ANALYSIS")
+        if not silent:
+            print(f"\nPURCHASE RECOMMENDATION ANALYSIS")
         
         # Initialize score (0-100 scale)
         buy_score = 50  # Start neutral
@@ -388,141 +425,184 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
             # For calls, positive delta is good
             if d > 0.7:
                 buy_score += 15
-                print(f"   [+] Strong call delta ({d:.3f}): +15")
+                if not silent:
+                    print(f"   [+] Strong call delta ({d:.3f}): +15")
             elif d > 0.5:
                 buy_score += 10
-                print(f"   [+] Good call delta ({d:.3f}): +10")
+                if not silent:
+                    print(f"   [+] Good call delta ({d:.3f}): +10")
             elif d > 0.3:
                 buy_score += 5
-                print(f"   [~] Moderate call delta ({d:.3f}): +5")
+                if not silent:
+                    print(f"   [~] Moderate call delta ({d:.3f}): +5")
             else:
                 buy_score -= 5
-                print(f"   [-] Weak call delta ({d:.3f}): -5")
+                if not silent:
+                    print(f"   [-] Weak call delta ({d:.3f}): -5")
         else:  # put
             # For puts, negative delta is good (in absolute terms)
             if d < -0.7:
                 buy_score += 15
-                print(f"   [+] Strong put delta ({d:.3f}): +15")
+                if not silent:
+                    print(f"   [+] Strong put delta ({d:.3f}): +15")
             elif d < -0.5:
                 buy_score += 10
-                print(f"   [+] Good put delta ({d:.3f}): +10")
+                if not silent:
+                    print(f"   [+] Good put delta ({d:.3f}): +10")
             elif d < -0.3:
                 buy_score += 5
-                print(f"   [~] Moderate put delta ({d:.3f}): +5")
+                if not silent:
+                    print(f"   [~] Moderate put delta ({d:.3f}): +5")
             else:
                 buy_score -= 5
-                print(f"   [-] Weak put delta ({d:.3f}): -5")
+                if not silent:
+                    print(f"   [-] Weak put delta ({d:.3f}): -5")
         
         # Gamma scoring (positive gamma is good for long options)
         gamma_normalized = g * S
         if gamma_normalized > 0.05:
             buy_score += 10
-            print(f"   [+] High gamma sensitivity ({g:.4f}): +10")
+            if not silent:
+                print(f"   [+] High gamma sensitivity ({g:.4f}): +10")
         elif gamma_normalized > 0.03:
             buy_score += 5
-            print(f"   [~] Moderate gamma ({g:.4f}): +5")
+            if not silent:
+                print(f"   [~] Moderate gamma ({g:.4f}): +5")
         elif gamma_normalized < 0.01:
             buy_score -= 5
-            print(f"   [-] Low gamma ({g:.4f}): -5")
+            if not silent:
+                print(f"   [-] Low gamma ({g:.4f}): -5")
         
         # Theta scoring (theta decay is bad for long options)
         abs_theta = abs(th)
         if abs_theta > 0.10:
             buy_score -= 15
-            print(f"   [-] Very high theta decay (${th:.3f}/day): -15")
+            if not silent:
+                print(f"   [-] Very high theta decay (${th:.3f}/day): -15")
         elif abs_theta > 0.05:
             buy_score -= 10
-            print(f"   [-] High theta decay (${th:.3f}/day): -10")
+            if not silent:
+                print(f"   [-] High theta decay (${th:.3f}/day): -10")
         elif abs_theta > 0.02:
             buy_score -= 5
-            print(f"   [~] Moderate theta decay (${th:.3f}/day): -5")
+            if not silent:
+                print(f"   [~] Moderate theta decay (${th:.3f}/day): -5")
         else:
             buy_score += 5
-            print(f"   [+] Low theta decay (${th:.3f}/day): +5")
+            if not silent:
+                print(f"   [+] Low theta decay (${th:.3f}/day): +5")
         
         # Vega scoring (high vega can be good if expecting vol increase)
         abs_vega = abs(v)
         if abs_vega > 0.30:
             buy_score += 8
-            print(f"   [+] High vega - good IV leverage (${v:.3f}): +8")
+            if not silent:
+                print(f"   [+] High vega - good IV leverage (${v:.3f}): +8")
         elif abs_vega > 0.15:
             buy_score += 5
-            print(f"   [~] Moderate vega (${v:.3f}): +5")
+            if not silent:
+                print(f"   [~] Moderate vega (${v:.3f}): +5")
         else:
             buy_score -= 3
-            print(f"   [~] Low vega - limited IV sensitivity (${v:.3f}): -3")
+            if not silent:
+                print(f"   [~] Low vega - limited IV sensitivity (${v:.3f}): -3")
         
         # Time to expiration scoring
         if days < 7:
             buy_score -= 20
-            print(f"   [-] Very short time to expiration ({days} days): -20")
+            if not silent:
+                print(f"   [-] Very short time to expiration ({days} days): -20")
         elif days < 14:
             buy_score -= 10
-            print(f"   [-] Short time to expiration ({days} days): -10")
+            if not silent:
+                print(f"   [-] Short time to expiration ({days} days): -10")
         elif days < 30:
             buy_score -= 5
-            print(f"   [~] Limited time to expiration ({days} days): -5")
+            if not silent:
+                print(f"   [~] Limited time to expiration ({days} days): -5")
         elif days < 60:
             buy_score += 5
-            print(f"   [+] Good time window ({days} days): +5")
+            if not silent:
+                print(f"   [+] Good time window ({days} days): +5")
         else:
             buy_score += 10
-            print(f"   [+] Ample time to expiration ({days} days): +10")
+            if not silent:
+                print(f"   [+] Ample time to expiration ({days} days): +10")
         
         # Moneyness scoring
         if abs(moneyness_pct) < 2:
             buy_score += 10
-            print(f"   [+] Near ATM - optimal gamma/theta balance: +10")
+            if not silent:
+                print(f"   [+] Near ATM - optimal gamma/theta balance: +10")
         elif abs(moneyness_pct) < 5:
             buy_score += 5
-            print(f"   [~] Close to ATM: +5")
+            if not silent:
+                print(f"   [~] Close to ATM: +5")
         elif abs(moneyness_pct) > 15:
             buy_score -= 10
-            print(f"   [-] Far from ATM - low probability: -10")
+            if not silent:
+                print(f"   [-] Far from ATM - low probability: -10")
         
         # Delta/Theta efficiency
         if th != 0:
             dt_ratio = abs(d / th)
             if dt_ratio > 50:
                 buy_score += 8
-                print(f"   [+] Excellent delta/theta efficiency ({dt_ratio:.1f}): +8")
+                if not silent:
+                    print(f"   [+] Excellent delta/theta efficiency ({dt_ratio:.1f}): +8")
             elif dt_ratio > 30:
                 buy_score += 5
-                print(f"   [+] Good delta/theta efficiency ({dt_ratio:.1f}): +5")
+                if not silent:
+                    print(f"   [+] Good delta/theta efficiency ({dt_ratio:.1f}): +5")
             elif dt_ratio < 15:
                 buy_score -= 8
-                print(f"   [-] Poor delta/theta efficiency ({dt_ratio:.1f}): -8")
+                if not silent:
+                    print(f"   [-] Poor delta/theta efficiency ({dt_ratio:.1f}): -8")
         
         # Normalize score to 0-100
         buy_score = max(0, min(100, buy_score))
         
-        print(f"\n{'='*70}")
-        print(f"   FINAL PURCHASE RECOMMENDATION SCORE: {buy_score:.1f}/100")
+        if not silent:
+            print(f"\n{'='*70}")
+            print(f"   FINAL PURCHASE RECOMMENDATION SCORE: {buy_score:.1f}/100")
         
-        # Qualitative assessment
-        if buy_score >= 75:
-            recommendation = "STRONG BUY"
-            marker = "[+++]"
-        elif buy_score >= 60:
-            recommendation = "BUY"
-            marker = "[++]"
-        elif buy_score >= 50:
-            recommendation = "NEUTRAL/SLIGHT BUY"
-            marker = "[+]"
-        elif buy_score >= 40:
-            recommendation = "NEUTRAL/SLIGHT AVOID"
-            marker = "[-]"
-        elif buy_score >= 25:
-            recommendation = "AVOID"
-            marker = "[--]"
+        if not silent:
+            # Qualitative assessment
+            if buy_score >= 75:
+                recommendation = "STRONG BUY"
+                marker = "[+++]"
+            elif buy_score >= 60:
+                recommendation = "BUY"
+                marker = "[++]"
+            elif buy_score >= 50:
+                recommendation = "NEUTRAL/SLIGHT BUY"
+                marker = "[+]"
+            elif buy_score >= 40:
+                recommendation = "NEUTRAL/SLIGHT AVOID"
+                marker = "[-]"
+            elif buy_score >= 25:
+                recommendation = "AVOID"
+                marker = "[--]"
+            else:
+                recommendation = "STRONG AVOID"
+                marker = "[---]"
+            
+            print(f"   {marker} RECOMMENDATION: {recommendation}")
+            print(f"{'='*70}\n")
         else:
-            recommendation = "STRONG AVOID"
-            marker = "[---]"
-        
-        print(f"   {marker} RECOMMENDATION: {recommendation}")
-        print(f"{'='*70}\n")
-        
-        # Add recommendation to return dict
+            # Silent mode - still determine recommendation but don't print
+            if buy_score >= 75:
+                recommendation = "STRONG BUY"
+            elif buy_score >= 60:
+                recommendation = "BUY"
+            elif buy_score >= 50:
+                recommendation = "NEUTRAL/SLIGHT BUY"
+            elif buy_score >= 40:
+                recommendation = "NEUTRAL/SLIGHT AVOID"
+            elif buy_score >= 25:
+                recommendation = "AVOID"
+            else:
+                recommendation = "STRONG AVOID"
         greeks_dict['buy_score'] = buy_score
         greeks_dict['recommendation'] = recommendation
     
