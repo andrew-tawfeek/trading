@@ -7,6 +7,7 @@ from technical_retrievals import *
 import pandas as pd
 import os
 
+
 def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False):
     assert option_type in ['put', 'call'], "option_type must be 'put' or 'call'"
 
@@ -40,7 +41,492 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
     th = theta(option_type[0], S, K, t, get_rates(strike_date), IV)
     r = rho(option_type[0], S, K, t, get_rates(strike_date), IV)
     
-    return {'delta': float(d), 'gamma': float(g), 'vega': float(v), 'theta': float(th), 'rho': float(r)}
+    greeks_dict = {'delta': float(d), 'gamma': float(g), 'vega': float(v), 'theta': float(th), 'rho': float(r)}
+    
+    if status:
+        print("\n" + "="*70)
+        print(f"GREEKS ANALYSIS: {ticker_symbol} {option_type.upper()} ${K} exp {strike_date}")
+        print("="*70)
+        
+        # Basic Information
+        print(f"\nCURRENT MARKET DATA")
+        print(f"   Stock Price: ${S:.2f}")
+        print(f"   Strike Price: ${K:.2f}")
+        print(f"   Days to Expiration: {days}")
+        print(f"   Implied Volatility: {IV*100:.2f}%")
+        
+        # Moneyness
+        moneyness_pct = ((S - K) / K) * 100
+        if option_type == 'call':
+            if S > K:
+                moneyness = f"ITM (In-The-Money) by ${S-K:.2f} ({moneyness_pct:.2f}%)"
+            elif abs(S - K) < 0.02 * K:
+                moneyness = f"ATM (At-The-Money) within ${abs(S-K):.2f}"
+            else:
+                moneyness = f"OTM (Out-of-The-Money) by ${K-S:.2f} ({-moneyness_pct:.2f}%)"
+        else:  # put
+            if S < K:
+                moneyness = f"ITM (In-The-Money) by ${K-S:.2f} ({-moneyness_pct:.2f}%)"
+            elif abs(S - K) < 0.02 * K:
+                moneyness = f"ATM (At-The-Money) within ${abs(S-K):.2f}"
+            else:
+                moneyness = f"OTM (Out-of-The-Money) by ${S-K:.2f} ({moneyness_pct:.2f}%)"
+        
+        print(f"   Moneyness: {moneyness}")
+        
+        # Raw Greeks
+        print(f"\nRAW GREEKS VALUES")
+        print(f"   Delta (Δ):   {d:>8.4f}")
+        print(f"   Gamma (Γ):   {g:>8.4f}")
+        print(f"   Vega (ν):    {v:>8.4f}")
+        print(f"   Theta (Θ):   {th:>8.4f}")
+        print(f"   Rho (ρ):     {r:>8.4f}")
+        
+        # DELTA ANALYSIS
+        print(f"\nDELTA ANALYSIS")
+        delta_prob = abs(d) * 100
+        print(f"   Probability of Expiring ITM: ~{delta_prob:.1f}%")
+        print(f"   Equivalent Share Position: {d*100:.2f} shares")
+        
+        if abs(d) < 0.25:
+            delta_class = "Deep OTM - Low directional exposure"
+        elif abs(d) < 0.45:
+            delta_class = "OTM - Moderate directional exposure"
+        elif abs(d) < 0.55:
+            delta_class = "ATM - High directional exposure"
+        elif abs(d) < 0.75:
+            delta_class = "ITM - Strong directional exposure"
+        else:
+            delta_class = "Deep ITM - Very strong directional exposure"
+        print(f"   Delta Classification: {delta_class}")
+        
+        if option_type == 'call':
+            delta_direction = "Bullish" if d > 0 else "Neutral/Bearish"
+        else:
+            delta_direction = "Bearish" if d < 0 else "Neutral/Bullish"
+        print(f"   Direction: {delta_direction}")
+        
+        # GAMMA ANALYSIS
+        print(f"\nGAMMA ANALYSIS")
+        print(f"   Delta Change per $1 Move: {g:.4f}")
+        
+        gamma_normalized = g * S  # Normalize by stock price
+        if gamma_normalized < 0.01:
+            gamma_risk = "Low - Stable delta"
+        elif gamma_normalized < 0.03:
+            gamma_risk = "Medium - Moderate delta acceleration"
+        elif gamma_normalized < 0.05:
+            gamma_risk = "High - Significant delta changes expected"
+        else:
+            gamma_risk = "Very High - Extreme delta sensitivity"
+        print(f"   Gamma Risk Level: {gamma_risk}")
+        
+        # Distance from maximum gamma (ATM)
+        distance_from_atm = abs(S - K) / S * 100
+        print(f"   Distance from Max Gamma (ATM): {distance_from_atm:.2f}%")
+        
+        if days < 10 and distance_from_atm < 5:
+            print(f"   WARNING: High gamma risk near expiration!")
+        
+        # VEGA ANALYSIS
+        print(f"\nVEGA ANALYSIS")
+        print(f"   P&L per 1% IV Change: ${v:.2f}")
+        
+        vega_exposure = "Long Volatility" if v > 0 else "Short Volatility"
+        print(f"   Volatility Exposure: {vega_exposure}")
+        
+        # Vega as percentage of option value (approximate)
+        if abs(v) < 0.05:
+            vega_class = "Low IV Sensitivity"
+        elif abs(v) < 0.15:
+            vega_class = "Medium IV Sensitivity"
+        elif abs(v) < 0.30:
+            vega_class = "High IV Sensitivity"
+        else:
+            vega_class = "Very High IV Sensitivity"
+        print(f"   Vega Classification: {vega_class}")
+        
+        # THETA ANALYSIS
+        print(f"\nTHETA ANALYSIS")
+        print(f"   Daily Time Decay: ${th:.2f}")
+        print(f"   Weekly Time Decay: ${th*7:.2f}")
+        print(f"   Monthly Time Decay (30d): ${th*30:.2f}")
+        
+        # Theta acceleration warning
+        if days < 30:
+            print(f"   WARNING: Entering theta acceleration zone (<30 DTE)")
+        if days < 14:
+            print(f"   WARNING: HIGH theta decay period (<14 DTE)")
+        if days < 7:
+            print(f"   WARNING: EXTREME theta decay period (<7 DTE)")
+        
+        # Theta magnitude classification
+        abs_theta = abs(th)
+        if abs_theta < 0.02:
+            theta_class = "Low - Minimal time decay"
+        elif abs_theta < 0.05:
+            theta_class = "Medium - Moderate time decay"
+        elif abs_theta < 0.10:
+            theta_class = "High - Significant time decay"
+        else:
+            theta_class = "Very High - Severe time decay"
+        print(f"   Theta Classification: {theta_class}")
+        
+        # Break-even move to offset theta
+        if abs(d) > 0.01:
+            breakeven_move = abs(th / d)
+            print(f"   Stock Move to Offset Daily Theta: ${breakeven_move:.2f}")
+        
+        # RHO ANALYSIS
+        print(f"\nRHO ANALYSIS")
+        print(f"   P&L per 1% Rate Change: ${r:.2f}")
+        
+        # Rho is generally negligible for short-dated options
+        if days < 90:
+            rho_relevance = "Negligible (short-dated option)"
+        elif days < 180:
+            rho_relevance = "Low (medium-dated option)"
+        else:
+            rho_relevance = "Moderate (long-dated option)"
+        print(f"   Interest Rate Sensitivity: {rho_relevance}")
+        
+        # RISK METRICS
+        print(f"\nRISK METRICS")
+        
+        # Delta/Theta ratio (reward per day of time decay)
+        if th != 0:
+            delta_theta_ratio = abs(d / th)
+            print(f"   Delta/Theta Ratio: {delta_theta_ratio:.2f} (directional gain needed per $1 theta)")
+        
+        # Gamma/Vega ratio
+        if v != 0:
+            gamma_vega_ratio = abs(g / v)
+            print(f"   Gamma/Vega Ratio: {gamma_vega_ratio:.4f} (convexity vs volatility)")
+        
+        # Total Greek Risk Score (weighted combination)
+        risk_score = (abs(d) * 0.3 + abs(g) * S * 0.3 + abs(v) * 0.2 + 
+                      abs(th) * 10 * 0.15 + abs(r) * 0.05)
+        print(f"   Composite Risk Score: {risk_score:.2f}")
+        
+        # SENSITIVITY SCENARIOS
+        print(f"\nSENSITIVITY SCENARIOS")
+        
+        # Stock price moves
+        move_1pct = S * 0.01
+        move_5pct = S * 0.05
+        move_10pct = S * 0.10
+        
+        pl_up_1 = d * move_1pct + 0.5 * g * move_1pct**2
+        pl_down_1 = d * (-move_1pct) + 0.5 * g * (-move_1pct)**2
+        pl_up_5 = d * move_5pct + 0.5 * g * move_5pct**2
+        pl_down_5 = d * (-move_5pct) + 0.5 * g * (-move_5pct)**2
+        pl_up_10 = d * move_10pct + 0.5 * g * move_10pct**2
+        pl_down_10 = d * (-move_10pct) + 0.5 * g * (-move_10pct)**2
+        
+        print(f"   Stock Move Scenarios:")
+        print(f"      +1% (${S + move_1pct:.2f}): P&L ≈ ${pl_up_1:.2f}")
+        print(f"      -1% (${S - move_1pct:.2f}): P&L ≈ ${pl_down_1:.2f}")
+        print(f"      +5% (${S + move_5pct:.2f}): P&L ≈ ${pl_up_5:.2f}")
+        print(f"      -5% (${S - move_5pct:.2f}): P&L ≈ ${pl_down_5:.2f}")
+        print(f"     +10% (${S + move_10pct:.2f}): P&L ≈ ${pl_up_10:.2f}")
+        print(f"     -10% (${S - move_10pct:.2f}): P&L ≈ ${pl_down_10:.2f}")
+        
+        # IV scenarios
+        print(f"   IV Change Scenarios:")
+        print(f"      +10% IV: P&L ≈ ${v * 10:.2f}")
+        print(f"      -10% IV: P&L ≈ ${-v * 10:.2f}")
+        print(f"      +25% IV: P&L ≈ ${v * 25:.2f}")
+        print(f"      -25% IV: P&L ≈ ${-v * 25:.2f}")
+        print(f"      +50% IV: P&L ≈ ${v * 50:.2f}")
+        print(f"      -50% IV: P&L ≈ ${-v * 50:.2f}")
+        
+        # Time decay scenarios
+        print(f"   Time Decay Scenarios:")
+        print(f"      After 1 day: P&L ≈ ${th:.2f}")
+        print(f"      After 1 week: P&L ≈ ${th * 7:.2f}")
+        print(f"      After 2 weeks: P&L ≈ ${th * 14:.2f}")
+        
+        # STOP-LOSS AND TAKE-PROFIT RECOMMENDATIONS
+        print(f"\nSTOP-LOSS & TAKE-PROFIT RECOMMENDATIONS")
+        
+        # Get current option price (mid price as estimate)
+        option_price = option.get('lastPrice', 0)
+        if option_price == 0:
+            # Try to estimate from bid/ask
+            bid = option.get('bid', 0)
+            ask = option.get('ask', 0)
+            if bid > 0 and ask > 0:
+                option_price = (bid + ask) / 2
+        
+        if option_price > 0:
+            print(f"   Current Option Price: ${option_price:.2f}")
+            
+            # Stop-loss recommendations based on risk profile
+            # Conservative: 20-30% loss
+            # Moderate: 30-50% loss
+            # Aggressive: 50-70% loss
+            
+            # Adjust based on Greeks characteristics
+            if days < 14:
+                # Short-dated options: tighter stops due to theta
+                sl_conservative = option_price * 0.75  # 25% loss
+                sl_moderate = option_price * 0.60      # 40% loss
+                sl_aggressive = option_price * 0.45    # 55% loss
+                stop_note = "(Tighter stops for short DTE)"
+            elif abs(th) > 0.10:
+                # High theta decay: tighter stops
+                sl_conservative = option_price * 0.75
+                sl_moderate = option_price * 0.60
+                sl_aggressive = option_price * 0.45
+                stop_note = "(Tighter stops due to high theta)"
+            elif abs(d) < 0.30:
+                # Far OTM: tighter stops (lower probability)
+                sl_conservative = option_price * 0.75
+                sl_moderate = option_price * 0.55
+                sl_aggressive = option_price * 0.40
+                stop_note = "(Tighter stops for OTM option)"
+            else:
+                # Standard stops
+                sl_conservative = option_price * 0.70  # 30% loss
+                sl_moderate = option_price * 0.50      # 50% loss
+                sl_aggressive = option_price * 0.30    # 70% loss
+                stop_note = "(Standard risk profile)"
+            
+            print(f"\n   Stop-Loss Levels {stop_note}:")
+            print(f"      Conservative (25-30% loss): ${sl_conservative:.2f}")
+            print(f"      Moderate (40-50% loss):     ${sl_moderate:.2f}")
+            print(f"      Aggressive (55-70% loss):   ${sl_aggressive:.2f}")
+            
+            # Take-profit recommendations
+            # Based on risk-reward ratios and option characteristics
+            
+            if abs(d) > 0.70:
+                # Deep ITM: smaller percentage gains expected
+                tp_conservative = option_price * 1.25  # 25% gain
+                tp_moderate = option_price * 1.50      # 50% gain
+                tp_aggressive = option_price * 1.75    # 75% gain
+                tp_note = "(Lower % targets for ITM)"
+            elif abs(d) < 0.30:
+                # Far OTM: higher percentage gains possible
+                tp_conservative = option_price * 1.50  # 50% gain
+                tp_moderate = option_price * 2.00      # 100% gain
+                tp_aggressive = option_price * 3.00    # 200% gain
+                tp_note = "(Higher % targets for OTM)"
+            else:
+                # ATM: balanced targets
+                tp_conservative = option_price * 1.40  # 40% gain
+                tp_moderate = option_price * 1.75      # 75% gain
+                tp_aggressive = option_price * 2.25    # 125% gain
+                tp_note = "(Balanced targets for ATM)"
+            
+            print(f"\n   Take-Profit Levels {tp_note}:")
+            print(f"      Conservative (25-50% gain):  ${tp_conservative:.2f}")
+            print(f"      Moderate (50-100% gain):     ${tp_moderate:.2f}")
+            print(f"      Aggressive (100-200% gain):  ${tp_aggressive:.2f}")
+            
+            # Risk-reward ratios
+            rr_conservative = (tp_conservative - option_price) / (option_price - sl_conservative)
+            rr_moderate = (tp_moderate - option_price) / (option_price - sl_moderate)
+            rr_aggressive = (tp_aggressive - option_price) / (option_price - sl_aggressive)
+            
+            print(f"\n   Risk-Reward Ratios:")
+            print(f"      Conservative: {rr_conservative:.2f}:1")
+            print(f"      Moderate:     {rr_moderate:.2f}:1")
+            print(f"      Aggressive:   {rr_aggressive:.2f}:1")
+            
+            # Underlying stock price levels for stop/target
+            # Calculate what stock price would cause option to hit these levels
+            print(f"\n   Approximate Stock Price Levels:")
+            
+            # For stop-loss - estimate stock move needed
+            # This is approximate: (stop_price - current_price) / delta
+            if abs(d) > 0.05:
+                stock_sl_conservative = S + (sl_conservative - option_price) / d
+                stock_sl_moderate = S + (sl_moderate - option_price) / d
+                stock_sl_aggressive = S + (sl_aggressive - option_price) / d
+                
+                stock_tp_conservative = S + (tp_conservative - option_price) / d
+                stock_tp_moderate = S + (tp_moderate - option_price) / d
+                stock_tp_aggressive = S + (tp_aggressive - option_price) / d
+                
+                print(f"      Stop-Loss Stock Prices:")
+                print(f"         Conservative: ${stock_sl_conservative:.2f} ({((stock_sl_conservative/S - 1)*100):+.1f}%)")
+                print(f"         Moderate:     ${stock_sl_moderate:.2f} ({((stock_sl_moderate/S - 1)*100):+.1f}%)")
+                print(f"         Aggressive:   ${stock_sl_aggressive:.2f} ({((stock_sl_aggressive/S - 1)*100):+.1f}%)")
+                
+                print(f"      Take-Profit Stock Prices:")
+                print(f"         Conservative: ${stock_tp_conservative:.2f} ({((stock_tp_conservative/S - 1)*100):+.1f}%)")
+                print(f"         Moderate:     ${stock_tp_moderate:.2f} ({((stock_tp_moderate/S - 1)*100):+.1f}%)")
+                print(f"         Aggressive:   ${stock_tp_aggressive:.2f} ({((stock_tp_aggressive/S - 1)*100):+.1f}%)")
+            else:
+                print(f"      (Stock price estimates unavailable - delta too low)")
+            
+            # Add trailing stop recommendation
+            print(f"\n   Trailing Stop Recommendation:")
+            if days > 30:
+                trailing_pct = 25
+            elif days > 14:
+                trailing_pct = 20
+            else:
+                trailing_pct = 15
+            
+            print(f"      Trailing stop: {trailing_pct}% from peak")
+            print(f"      (Adjust tighter as expiration approaches)")
+            
+        else:
+            print(f"   (Option price data unavailable for stop-loss/take-profit calculation)")
+
+        
+        # PURCHASE RECOMMENDATION SCORE
+        print(f"\nPURCHASE RECOMMENDATION ANALYSIS")
+        
+        # Initialize score (0-100 scale)
+        buy_score = 50  # Start neutral
+        
+        # Delta scoring (directional alignment)
+        if option_type == 'call':
+            # For calls, positive delta is good
+            if d > 0.7:
+                buy_score += 15
+                print(f"   [+] Strong call delta ({d:.3f}): +15")
+            elif d > 0.5:
+                buy_score += 10
+                print(f"   [+] Good call delta ({d:.3f}): +10")
+            elif d > 0.3:
+                buy_score += 5
+                print(f"   [~] Moderate call delta ({d:.3f}): +5")
+            else:
+                buy_score -= 5
+                print(f"   [-] Weak call delta ({d:.3f}): -5")
+        else:  # put
+            # For puts, negative delta is good (in absolute terms)
+            if d < -0.7:
+                buy_score += 15
+                print(f"   [+] Strong put delta ({d:.3f}): +15")
+            elif d < -0.5:
+                buy_score += 10
+                print(f"   [+] Good put delta ({d:.3f}): +10")
+            elif d < -0.3:
+                buy_score += 5
+                print(f"   [~] Moderate put delta ({d:.3f}): +5")
+            else:
+                buy_score -= 5
+                print(f"   [-] Weak put delta ({d:.3f}): -5")
+        
+        # Gamma scoring (positive gamma is good for long options)
+        gamma_normalized = g * S
+        if gamma_normalized > 0.05:
+            buy_score += 10
+            print(f"   [+] High gamma sensitivity ({g:.4f}): +10")
+        elif gamma_normalized > 0.03:
+            buy_score += 5
+            print(f"   [~] Moderate gamma ({g:.4f}): +5")
+        elif gamma_normalized < 0.01:
+            buy_score -= 5
+            print(f"   [-] Low gamma ({g:.4f}): -5")
+        
+        # Theta scoring (theta decay is bad for long options)
+        abs_theta = abs(th)
+        if abs_theta > 0.10:
+            buy_score -= 15
+            print(f"   [-] Very high theta decay (${th:.3f}/day): -15")
+        elif abs_theta > 0.05:
+            buy_score -= 10
+            print(f"   [-] High theta decay (${th:.3f}/day): -10")
+        elif abs_theta > 0.02:
+            buy_score -= 5
+            print(f"   [~] Moderate theta decay (${th:.3f}/day): -5")
+        else:
+            buy_score += 5
+            print(f"   [+] Low theta decay (${th:.3f}/day): +5")
+        
+        # Vega scoring (high vega can be good if expecting vol increase)
+        abs_vega = abs(v)
+        if abs_vega > 0.30:
+            buy_score += 8
+            print(f"   [+] High vega - good IV leverage (${v:.3f}): +8")
+        elif abs_vega > 0.15:
+            buy_score += 5
+            print(f"   [~] Moderate vega (${v:.3f}): +5")
+        else:
+            buy_score -= 3
+            print(f"   [~] Low vega - limited IV sensitivity (${v:.3f}): -3")
+        
+        # Time to expiration scoring
+        if days < 7:
+            buy_score -= 20
+            print(f"   [-] Very short time to expiration ({days} days): -20")
+        elif days < 14:
+            buy_score -= 10
+            print(f"   [-] Short time to expiration ({days} days): -10")
+        elif days < 30:
+            buy_score -= 5
+            print(f"   [~] Limited time to expiration ({days} days): -5")
+        elif days < 60:
+            buy_score += 5
+            print(f"   [+] Good time window ({days} days): +5")
+        else:
+            buy_score += 10
+            print(f"   [+] Ample time to expiration ({days} days): +10")
+        
+        # Moneyness scoring
+        if abs(moneyness_pct) < 2:
+            buy_score += 10
+            print(f"   [+] Near ATM - optimal gamma/theta balance: +10")
+        elif abs(moneyness_pct) < 5:
+            buy_score += 5
+            print(f"   [~] Close to ATM: +5")
+        elif abs(moneyness_pct) > 15:
+            buy_score -= 10
+            print(f"   [-] Far from ATM - low probability: -10")
+        
+        # Delta/Theta efficiency
+        if th != 0:
+            dt_ratio = abs(d / th)
+            if dt_ratio > 50:
+                buy_score += 8
+                print(f"   [+] Excellent delta/theta efficiency ({dt_ratio:.1f}): +8")
+            elif dt_ratio > 30:
+                buy_score += 5
+                print(f"   [+] Good delta/theta efficiency ({dt_ratio:.1f}): +5")
+            elif dt_ratio < 15:
+                buy_score -= 8
+                print(f"   [-] Poor delta/theta efficiency ({dt_ratio:.1f}): -8")
+        
+        # Normalize score to 0-100
+        buy_score = max(0, min(100, buy_score))
+        
+        print(f"\n{'='*70}")
+        print(f"   FINAL PURCHASE RECOMMENDATION SCORE: {buy_score:.1f}/100")
+        
+        # Qualitative assessment
+        if buy_score >= 75:
+            recommendation = "STRONG BUY"
+            marker = "[+++]"
+        elif buy_score >= 60:
+            recommendation = "BUY"
+            marker = "[++]"
+        elif buy_score >= 50:
+            recommendation = "NEUTRAL/SLIGHT BUY"
+            marker = "[+]"
+        elif buy_score >= 40:
+            recommendation = "NEUTRAL/SLIGHT AVOID"
+            marker = "[-]"
+        elif buy_score >= 25:
+            recommendation = "AVOID"
+            marker = "[--]"
+        else:
+            recommendation = "STRONG AVOID"
+            marker = "[---]"
+        
+        print(f"   {marker} RECOMMENDATION: {recommendation}")
+        print(f"{'='*70}\n")
+        
+        # Add recommendation to return dict
+        greeks_dict['buy_score'] = buy_score
+        greeks_dict['recommendation'] = recommendation
+    
+    return greeks_dict
 
 
 def option_price(ticker_symbol, strike_date, strike_price, option_type):
