@@ -10,6 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from typing import Union, Tuple, Dict, List, Optional
 from dataclasses import dataclass
+from yfinance_cache import download_cached
 
 # Set the default renderer to browser for Windows
 pio.renderers.default = 'browser'
@@ -107,6 +108,8 @@ def fit_fourier(data: np.ndarray, n_harmonics: int = 10,
     # Apply Gaussian smoothing if requested
     if smoothing_sigma > 0:
         filtered_signal = gaussian_filter1d(filtered_signal, sigma=smoothing_sigma)
+        # Re-center after smoothing to ensure zero mean (removes any DC shift from smoothing)
+        filtered_signal = filtered_signal - np.mean(filtered_signal)
 
     # Add the trend back
     reconstructed = filtered_signal + trend
@@ -460,9 +463,8 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
         Interactive plotly figure
     """
 
-    # Download stock data
-    print(f"Downloading {ticker} data from {start_date} to {end_date}...")
-    stock_data = yf.download(ticker, start=start_date, end=end_date, interval=tick_size, progress=False)
+    # Download stock data (with caching)
+    stock_data = download_cached(ticker, start=start_date, end=end_date, interval=tick_size, progress=False, auto_adjust=False)
 
     if stock_data.empty:
         raise ValueError(f"No data found for {ticker} in the specified date range")
@@ -681,8 +683,8 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
 
 def get_stock_data(ticker: str, start_date: str, end_date: str,
                    tick_size: str = '1d') -> pd.DataFrame:
-    """Download and return stock data."""
-    data = yf.download(ticker, start=start_date, end=end_date, interval=tick_size, progress=False)
+    """Download and return stock data (with caching)."""
+    data = download_cached(ticker, start=start_date, end=end_date, interval=tick_size, progress=False, auto_adjust=False)
     return data
 
 
@@ -794,40 +796,40 @@ def print_backtest_summary(results: Dict):
 
 if __name__ == "__main__":
     # Example 1: Basic candlestick plot with Fourier
-    # print("\n=== Example 1: Candlestick with Fourier ===")
-    # fig1 = plot_stock(
-    #     'AAPL',
-    #     '2024-01-01',
-    #     '2024-12-20',
-    #     tick_size='1d',
-    #     fourier=True,
-    #     n_harmonics=[5, 10, 20],
-    #     smoothing_sigma=3.0,
-    #     use_candlestick=True,
-    #     overbought_threshold=10.0,
-    #     oversold_threshold=-10.0,
-    #     show_signals=True
-    # )
-    # fig1.show()
+    print("\n=== Example 1: Candlestick with Fourier ===")
+    fig1 = plot_stock(
+        'SPY',
+        '2025-05-28',
+        '2025-12-20',
+        tick_size='1d',
+        fourier=True,
+        n_harmonics=[5, 10, 18, 20, 30],
+        smoothing_sigma=0.0,
+        use_candlestick=True,
+        overbought_threshold=9,
+        oversold_threshold=-8,
+        show_signals=True
+    )
+    fig1.show()
 
     # Example 2: Run a complete backtest
-    print("\n=== Example 2: Fourier Backtesting ===")
+    # print("\n=== Example 2: Fourier Backtesting ===")
 
 
 
-    for n in range(1,20):
-        print(f"\n--- Running backtest with {n} harmonics ---")
-        backtest_results = run_fourier_backtest(
-            ticker='AAPL',
-            start_date='2024-01-01',
-            end_date='2024-12-20',
-            n_harmonics=n,
-            smoothing_sigma=1.0,
-            overbought_threshold=8.0,
-            oversold_threshold=-8.0,
-            initial_capital=10000.0
-        )
-        print_backtest_summary(backtest_results)
+    # for n in range(1,20):
+    #     print(f"\n--- Running backtest with {n} harmonics ---")
+    #     backtest_results = run_fourier_backtest(
+    #         ticker='AAPL',
+    #         start_date='2024-01-01',
+    #         end_date='2024-12-20',
+    #         n_harmonics=n,
+    #         smoothing_sigma=1.0,
+    #         overbought_threshold=8.0,
+    #         oversold_threshold=-8.0,
+    #         initial_capital=10000.0
+    #     )
+    #     print_backtest_summary(backtest_results)
 
     # Example 3: Analyze peaks
     # analysis = backtest_results['fourier_analysis']
