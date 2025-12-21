@@ -794,37 +794,45 @@ def print_backtest_summary(results: Dict):
 
 if __name__ == "__main__":
     # Example 1: Basic candlestick plot with Fourier
-    print("\n=== Example 1: Candlestick with Fourier ===")
-    fig1 = plot_stock(
-        'AAPL',
-        '2024-01-01',
-        '2024-12-20',
-        tick_size='1d',
-        fourier=True,
-        n_harmonics=[5, 10, 20],
-        smoothing_sigma=3.0,
-        use_candlestick=True,
-        overbought_threshold=10.0,
-        oversold_threshold=-10.0,
-        show_signals=True
-    )
-    fig1.show()
+    # print("\n=== Example 1: Candlestick with Fourier ===")
+    # fig1 = plot_stock(
+    #     'AAPL',
+    #     '2024-01-01',
+    #     '2024-12-20',
+    #     tick_size='1d',
+    #     fourier=True,
+    #     n_harmonics=[5, 10, 20],
+    #     smoothing_sigma=3.0,
+    #     use_candlestick=True,
+    #     overbought_threshold=10.0,
+    #     oversold_threshold=-10.0,
+    #     show_signals=True
+    # )
+    # fig1.show()
 
     # Example 2: Run a complete backtest
     print("\n=== Example 2: Fourier Backtesting ===")
-    backtest_results = run_fourier_backtest(
-        ticker='AAPL',
-        start_date='2024-01-01',
-        end_date='2024-12-20',
-        n_harmonics=10,
-        smoothing_sigma=1.0,
-        overbought_threshold=8.0,
-        oversold_threshold=-8.0,
-        initial_capital=10000.0
-    )
-    print_backtest_summary(backtest_results)
+
+
+
+    for n in range(1,20):
+        print(f"\n--- Running backtest with {n} harmonics ---")
+        backtest_results = run_fourier_backtest(
+            ticker='AAPL',
+            start_date='2024-01-01',
+            end_date='2024-12-20',
+            n_harmonics=n,
+            smoothing_sigma=1.0,
+            overbought_threshold=8.0,
+            oversold_threshold=-8.0,
+            initial_capital=10000.0
+        )
+        print_backtest_summary(backtest_results)
 
     # Example 3: Analyze peaks
     # analysis = backtest_results['fourier_analysis']
     # peaks, troughs = find_fourier_peaks(analysis, prominence=1.0)
     # print(f"\nFound {len(peaks)} peaks and {len(troughs)} troughs")
+
+
+    #TODO ITERATE OVER HARMONICS AND OTHER VARIABLES TO FIND IDEAL FOR STOCKS, THEN FIND IDEAL FOR OPTIONS
