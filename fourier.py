@@ -1376,27 +1376,51 @@ def backtest_options_signals(ticker: str,
 
     total_return = ((capital - initial_capital) / initial_capital) * 100
 
-    # Create results object
+    # Create results dictionary
     # Convert dates to strings (handle numpy.datetime64)
     import pandas as pd
     start_date_str = pd.Timestamp(analysis.dates[0]).strftime('%Y-%m-%d')
     end_date_str = pd.Timestamp(analysis.dates[-1]).strftime('%Y-%m-%d')
 
-    results = OptionsBacktestResults(
-        ticker=ticker,
-        date_range=(start_date_str, end_date_str),
-        initial_capital=initial_capital,
-        final_capital=capital,
-        total_return=total_return,
-        total_trades=total_trades,
-        winning_trades=winning_trades,
-        losing_trades=losing_trades,
-        win_rate=win_rate,
-        average_pnl_percent=avg_pnl_percent,
-        average_days_held=avg_days_held,
-        trades=closed_trades,
-        capital_history=capital_history,
-        parameters={
+    # Convert trades to dictionaries for easier analysis
+    trades_list = []
+    for trade in closed_trades:
+        trades_list.append({
+            'entry_date': trade.entry_date,
+            'entry_index': trade.entry_index,
+            'option_type': trade.option_type,
+            'strike_price': trade.strike_price,
+            'expiration_date': trade.expiration_date,
+            'entry_price': trade.entry_price,
+            'entry_stock_price': trade.entry_stock_price,
+            'signal_reason': trade.signal_reason,
+            'greeks_at_entry': trade.greeks_at_entry,
+            'exit_date': trade.exit_date,
+            'exit_index': trade.exit_index,
+            'exit_price': trade.exit_price,
+            'exit_stock_price': trade.exit_stock_price,
+            'exit_reason': trade.exit_reason,
+            'pnl_percent': trade.pnl_percent,
+            'pnl_dollar': trade.pnl_dollar,
+            'days_held': trade.days_held,
+            'greeks_at_exit': trade.greeks_at_exit
+        })
+
+    results = {
+        'ticker': ticker,
+        'date_range': (start_date_str, end_date_str),
+        'initial_capital': initial_capital,
+        'final_capital': capital,
+        'total_return': total_return,
+        'total_trades': total_trades,
+        'winning_trades': winning_trades,
+        'losing_trades': losing_trades,
+        'win_rate': win_rate,
+        'average_pnl_percent': avg_pnl_percent,
+        'average_days_held': avg_days_held,
+        'trades': trades_list,
+        'capital_history': capital_history,
+        'parameters': {
             'contracts_per_trade': contracts_per_trade,
             'stoploss_percent': stoploss_percent,
             'takeprofit_percent': takeprofit_percent,
@@ -1404,51 +1428,48 @@ def backtest_options_signals(ticker: str,
             'otm_percent': otm_percent,
             'max_positions': max_positions
         },
-        fourier_analysis=analysis,
-        signals=signals
-    )
-
-    if verbose:
-        print(f"\n{'='*80}")
-        print_options_backtest_summary(results)
+        'fourier_analysis': analysis,
+        'signals': signals
+    }
 
     return results
 
 
-def print_options_backtest_summary(results: OptionsBacktestResults):
-    """Print a formatted summary of options backtest results."""
-    print(f"BACKTEST SUMMARY: {results.ticker}")
+def print_options_backtest_summary(results: dict):
+    """Print a formatted summary of options backtest results (from dictionary)."""
+    print(f"BACKTEST SUMMARY: {results['ticker']}")
     print(f"{'='*80}")
-    print(f"Date Range: {results.date_range[0]} to {results.date_range[1]}")
+    print(f"Date Range: {results['date_range'][0]} to {results['date_range'][1]}")
     print(f"\nCapital:")
-    print(f"  Initial: ${results.initial_capital:,.2f}")
-    print(f"  Final: ${results.final_capital:,.2f}")
-    print(f"  Total Return: {results.total_return:.2f}%")
+    print(f"  Initial: ${results['initial_capital']:,.2f}")
+    print(f"  Final: ${results['final_capital']:,.2f}")
+    print(f"  Total Return: {results['total_return']:.2f}%")
     print(f"\nTrades:")
-    print(f"  Total: {results.total_trades}")
-    print(f"  Winners: {results.winning_trades} ({results.win_rate:.1f}%)")
-    print(f"  Losers: {results.losing_trades}")
-    print(f"  Avg P&L: {results.average_pnl_percent:.2f}%")
-    print(f"  Avg Days Held: {results.average_days_held:.1f}")
+    print(f"  Total: {results['total_trades']}")
+    print(f"  Winners: {results['winning_trades']} ({results['win_rate']:.1f}%)")
+    print(f"  Losers: {results['losing_trades']}")
+    print(f"  Avg P&L: {results['average_pnl_percent']:.2f}%")
+    print(f"  Avg Days Held: {results['average_days_held']:.1f}")
     print(f"\nParameters:")
-    for key, value in results.parameters.items():
+    for key, value in results['parameters'].items():
         print(f"  {key}: {value}")
     print(f"{'='*80}\n")
 
     # Show sample trades
-    if results.trades:
+    if results['trades']:
         print("Sample Trades (last 5):")
         print(f"{'Date':<12} {'Type':<6} {'Strike':<8} {'Entry':<8} {'Exit':<8} {'P&L %':<10} {'Days':<6} {'Reason':<12}")
         print("-" * 80)
-        for trade in results.trades[-5:]:
-            print(f"{trade.entry_date.strftime('%Y-%m-%d'):<12} "
-                  f"{trade.option_type.upper():<6} "
-                  f"${trade.strike_price:<7.0f} "
-                  f"${trade.entry_price:<7.2f} "
-                  f"${trade.exit_price or 0:<7.2f} "
-                  f"{trade.pnl_percent or 0:<9.1f}% "
-                  f"{trade.days_held or 0:<6} "
-                  f"{trade.exit_reason or 'open':<12}")
+        for trade in results['trades'][-5:]:
+            entry_date_str = trade['entry_date'].strftime('%Y-%m-%d') if hasattr(trade['entry_date'], 'strftime') else str(trade['entry_date'])
+            print(f"{entry_date_str:<12} "
+                  f"{trade['option_type'].upper():<6} "
+                  f"${trade['strike_price']:<7.0f} "
+                  f"${trade['entry_price']:<7.2f} "
+                  f"${trade['exit_price'] or 0:<7.2f} "
+                  f"{trade['pnl_percent'] or 0:<9.1f}% "
+                  f"{trade['days_held'] or 0:<6} "
+                  f"{trade['exit_reason'] or 'open':<12}")
         print()
 
 
@@ -1467,7 +1488,7 @@ def run_fourier_options_backtest(ticker: str,
                                  otm_percent: float = 2.0,
                                  max_positions: int = 1,
                                  tick_size: str = '1d',
-                                 verbose: bool = True) -> OptionsBacktestResults:
+                                 verbose: bool = True) -> dict:
     """
     Run a complete Fourier-based options backtest.
 
@@ -1502,12 +1523,23 @@ def run_fourier_options_backtest(ticker: str,
     tick_size : str
         Data interval (default: '1d')
     verbose : bool
-        Print detailed information (default: True)
+        Print progress and trade details during execution (default: True)
+        Does NOT print final summary - use print_options_backtest_summary() for that
 
     Returns:
     --------
-    OptionsBacktestResults
-        Complete backtesting results
+    dict
+        Dictionary containing backtesting results with keys:
+        - ticker: Stock ticker
+        - date_range: Tuple of (start_date, end_date)
+        - initial_capital, final_capital, total_return
+        - total_trades, winning_trades, losing_trades, win_rate
+        - average_pnl_percent, average_days_held
+        - trades: List of trade dictionaries
+        - capital_history: List of capital snapshots
+        - parameters: Dict of backtest parameters
+        - fourier_analysis: FourierAnalysis object
+        - signals: List of SignalPoint objects
 
     Example:
     --------
@@ -1517,9 +1549,13 @@ def run_fourier_options_backtest(ticker: str,
     ...     end_date='2024-12-20',
     ...     n_harmonics=10,
     ...     stoploss_percent=50,
-    ...     takeprofit_percent=50
+    ...     takeprofit_percent=50,
+    ...     verbose=False  # Suppress progress output
     ... )
-    >>> print(f"Total Return: {results.total_return:.2f}%")
+    >>> print(f"Total Return: {results['total_return']:.2f}%")
+    >>> print(f"Win Rate: {results['win_rate']:.1f}%")
+    >>> # Print formatted summary if desired
+    >>> print_options_backtest_summary(results)
     """
     # Download data
     stock_data = get_stock_data(ticker, start_date, end_date, tick_size)
