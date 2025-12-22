@@ -1,11 +1,13 @@
 import yfinance as yf
-from py_vollib.black_scholes.greeks.analytical import delta, gamma, vega, theta, rho
-from py_vollib.black_scholes import black_scholes
+# Use Python 3.13-compatible Black-Scholes instead of py_vollib (has numba issues with 3.13)
+from black_scholes_compat import delta, gamma, vega, theta, rho, black_scholes, greeks as bs_greeks
 import numpy as np
 from datetime import datetime, timedelta
 from technical_retrievals import *
 import pandas as pd
 import os
+from functools import lru_cache
+from yfinance_cache import download_cached
 
 
 def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False, silent = False):
@@ -658,9 +660,12 @@ def continuous_monitor(ticker):
         print("Stopped monitoring")
 
 
+@lru_cache(maxsize=2000)
 def get_stock_price_historical(ticker_symbol, date):
     """
     Get historical stock price for a specific date.
+
+    Uses yfinance_cache for persistent disk caching across sessions.
 
     Args:
         ticker_symbol (str): Stock ticker symbol (e.g., 'AAPL')
@@ -670,14 +675,15 @@ def get_stock_price_historical(ticker_symbol, date):
         float: Close price for that date
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
         target_date = datetime.strptime(date, "%Y-%m-%d")
 
         # Fetch data for a range around the target date to handle weekends/holidays
         start_date = (target_date - timedelta(days=5)).strftime("%Y-%m-%d")
         end_date = (target_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
-        hist = ticker.history(start=start_date, end=end_date)
+        # Use cached download instead of direct API call
+        hist = download_cached(ticker_symbol, start=start_date, end=end_date,
+                              interval='1d', progress=False, auto_adjust=False)
 
         if len(hist) == 0:
             raise ValueError(f"No historical data available for {ticker_symbol} around {date}")
@@ -685,6 +691,9 @@ def get_stock_price_historical(ticker_symbol, date):
         # Get the closest available date (should be on or before target date)
         price = hist['Close'].iloc[-1]
 
+        # Convert to float properly (avoid pandas deprecation warning)
+        if hasattr(price, 'item'):
+            return price.item()  # numpy/pandas scalar
         return float(price)
 
     except Exception as e:

@@ -1,6 +1,8 @@
 import yfinance as yf
 import numpy as np
 import pandas as pd
+from functools import lru_cache
+from yfinance_cache import download_cached
 
 def countdown(date):
     # days until date
@@ -10,6 +12,7 @@ def countdown(date):
     count = target_date - today
     return count.days
 
+@lru_cache(maxsize=1000)
 def get_rates(expiration_date, historical_date=None):
     """
     Determine appropriate risk-free rate based on time to expiration.
@@ -84,9 +87,12 @@ def get_rates(expiration_date, historical_date=None):
         else:
             return 0.040  # ~4.0%
 
+@lru_cache(maxsize=1000)
 def get_historical_volatility(ticker_symbol, date, lookback_days=30):
     """
     Calculate historical volatility using past returns.
+
+    Uses yfinance_cache for persistent disk caching across sessions.
 
     Args:
         ticker_symbol (str): Stock ticker symbol
@@ -103,10 +109,11 @@ def get_historical_volatility(ticker_symbol, date, lookback_days=30):
     start_date = end_date - timedelta(days=lookback_days + 10)  # Extra days for weekends/holidays
 
     try:
-        # Fetch historical stock prices
-        ticker = yf.Ticker(ticker_symbol)
-        hist = ticker.history(start=start_date.strftime("%Y-%m-%d"),
-                            end=end_date.strftime("%Y-%m-%d"))
+        # Fetch historical stock prices using cached download
+        hist = download_cached(ticker_symbol,
+                              start=start_date.strftime("%Y-%m-%d"),
+                              end=end_date.strftime("%Y-%m-%d"),
+                              interval='1d', progress=False, auto_adjust=False)
 
         if len(hist) < lookback_days * 0.7:  # Need at least 70% of requested days
             raise ValueError(f"Insufficient data: only {len(hist)} days available")
@@ -118,6 +125,9 @@ def get_historical_volatility(ticker_symbol, date, lookback_days=30):
         # Calculate annualized volatility (assuming 252 trading days per year)
         volatility = returns.std() * np.sqrt(252)
 
+        # Convert to float properly (avoid pandas deprecation warning)
+        if hasattr(volatility, 'item'):
+            return volatility.item()  # numpy/pandas scalar
         return float(volatility)
 
     except Exception as e:
