@@ -1,0 +1,29 @@
+# Core Dependencies
+yfinance>=0.2.48
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Visualization
+plotly>=5.14.0
+
+# Progress Bars
+tqdm>=4.65.0
+
+# Optional: Live Trading (Alpaca)
+# alpaca-trade-api>=3.0.0
+
+# Optional: Machine Learning (for experimental features)
+# scikit-learn>=1.3.0
+# tensorflow>=2.13.0
+
+# Optional: Additional Technical Analysis
+# ta-lib>=0.4.0
+# pandas-ta>=0.3.0
+
+# Development Dependencies (optional)
+# pytest>=7.4.0
+# black>=23.0.0
+# flake8>=6.0.0
+# jupyter>=1.0.0
+# notebook>=7.0.0
