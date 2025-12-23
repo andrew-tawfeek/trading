@@ -429,17 +429,37 @@ class ReplayOptionsModel:
         else:
             return
 
-        # Filter signals based on trend (avoid trading against strong trends)
-        trend = self.get_trend_direction(close_prices)
-        if signal.signal_type == 'sell' and trend == 'bullish':
-            print(f"[{current_date.strftime('%Y-%m-%d %H:%M:%S')}] Skipping PUT signal - bullish trend detected")
-            return
-        elif signal.signal_type == 'buy' and trend == 'bearish':
-            print(f"[{current_date.strftime('%Y-%m-%d %H:%M:%S')}] Skipping CALL signal - bearish trend detected")
-            return
+        # Filter signals based on trend (avoid trading against VERY strong trends)
+        # Less aggressive filtering to capture momentum plays
+        trend = self.get_trend_direction(close_prices, lookback=30)  # Use longer lookback
+        
+        # Only filter extremely strong counter-trend signals
+        # Calculate trend strength
+        if len(close_prices) >= 30:
+            recent_30 = close_prices[-30:]
+            trend_strength = abs((recent_30[-1] - recent_30[0]) / recent_30[0]) * 100
+            
+            # Only skip if very strong counter-trend (>10% move in opposite direction)
+            if signal.signal_type == 'sell' and trend == 'bullish' and trend_strength > 10:
+                print(f"[{current_date.strftime('%Y-%m-%d %H:%M:%S')}] Skipping PUT signal - strong bullish trend ({trend_strength:.1f}%)")
+                return
+            elif signal.signal_type == 'buy' and trend == 'bearish' and trend_strength > 10:
+                print(f"[{current_date.strftime('%Y-%m-%d %H:%M:%S')}] Skipping CALL signal - strong bearish trend ({trend_strength:.1f}%)")
+                return
 
         current_price = signal.price
         strike_price = get_option_strike_price(current_price, option_type, self.otm_percent)
+        
+        # Validate strike price is reasonable (between 10% and 200% of current price)
+        if strike_price <= current_price * 0.1 or strike_price >= current_price * 2.0:
+            print(f"  Warning: Invalid strike price ${strike_price:.2f} for current price ${current_price:.2f}")
+            return
+        
+        # Also ensure strike is positive and not too small
+        if strike_price < 1.0:
+            print(f"  Warning: Strike price too low: ${strike_price:.2f}")
+            return
+            
         expiration_date = get_option_expiration(current_date, self.days_to_expiry, self.ticker)
 
         # Validate expiration date
@@ -587,8 +607,12 @@ class ReplayOptionsModel:
                     positions_to_close.append(position)
                     continue
 
-                # Calculate P&L
-                pnl_percent = ((current_price - position.entry_price) / position.entry_price) * 100
+                # Calculate P&L with safety check
+                if position.entry_price > 0:
+                    pnl_percent = ((current_price - position.entry_price) / position.entry_price) * 100
+                else:
+                    # Should not happen due to earlier validation, but safety fallback
+                    pnl_percent = -100.0
 
                 # Check stop-loss
                 if current_price <= position.entry_price * (1 - self.stoploss_percent / 100):

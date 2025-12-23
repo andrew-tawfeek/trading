@@ -954,6 +954,13 @@ def get_option_strike_price(stock_price: float, option_type: str,
         - $2.50 increments for stocks $200-$500
         - $5.00 increments for stocks over $500
     """
+    # Validate inputs
+    if stock_price <= 0:
+        raise ValueError(f"Invalid stock price: {stock_price}")
+    
+    if otm_percent < 0 or otm_percent > 50:
+        raise ValueError(f"OTM percent must be between 0 and 50, got {otm_percent}")
+    
     if option_type == 'call':
         # For calls, strike above current price
         strike = stock_price * (1 + otm_percent / 100)
@@ -974,6 +981,15 @@ def get_option_strike_price(stock_price: float, option_type: str,
 
     # Round to nearest increment
     rounded_strike = round(strike / increment) * increment
+    
+    # Safety check: ensure strike is positive and reasonable
+    if rounded_strike <= 0:
+        rounded_strike = increment  # Fallback to minimum strike
+    
+    # Prevent extreme strikes (more than 50% away from current price)
+    max_strike = stock_price * 1.5
+    min_strike = stock_price * 0.5
+    rounded_strike = max(min_strike, min(max_strike, rounded_strike))
 
     return rounded_strike
 
@@ -1016,10 +1032,16 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
 
     # Find the next Friday (options typically expire on Fridays)
     # weekday(): Monday=0, Tuesday=1, ..., Friday=4, Saturday=5, Sunday=6
-    days_until_friday = (4 - target_expiration.weekday()) % 7
-
-    # If target is already a Friday, use it; otherwise find next Friday
-    if days_until_friday == 0 and target_expiration.weekday() != 4:
+    current_weekday = target_expiration.weekday()
+    
+    # Calculate days until next Friday
+    if current_weekday <= 4:  # Monday through Friday
+        days_until_friday = 4 - current_weekday
+    else:  # Saturday or Sunday
+        days_until_friday = 4 + (7 - current_weekday)
+    
+    # If we're already on Friday or very close, go to next Friday
+    if days_until_friday == 0:
         days_until_friday = 7
 
     expiration = target_expiration + timedelta(days=days_until_friday)
