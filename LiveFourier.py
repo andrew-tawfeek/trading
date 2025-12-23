@@ -34,6 +34,8 @@ from datetime import datetime, timedelta
 import time
 from typing import Optional, List, Union
 import sys
+import json
+import os
 
 # Import Fourier analysis functions from fourier.py
 from fourier import (
@@ -45,6 +47,29 @@ from fourier import (
 
 # Set default renderer
 pio.renderers.default = 'browser'
+
+# Settings cache file location
+SETTINGS_CACHE_FILE = os.path.expanduser('~/.live_fourier_settings.json')
+
+
+def load_cached_settings():
+    """Load previously saved settings from cache file."""
+    if os.path.exists(SETTINGS_CACHE_FILE):
+        try:
+            with open(SETTINGS_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load cached settings: {e}")
+    return {}
+
+
+def save_settings(settings: dict):
+    """Save settings to cache file for next run."""
+    try:
+        with open(SETTINGS_CACHE_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not save settings: {e}")
 
 
 class LiveFourierMonitor:
@@ -108,6 +133,8 @@ class LiveFourierMonitor:
         # Track previous signals to avoid duplicate alerts
         self.last_signal = None
         self.last_signal_time = None
+        self.last_signal_index = None  # Track the index of the last signal we've alerted on
+        self.initial_load = True  # Flag to indicate we're still on initial load
 
         print(f"\n{'='*80}")
         print(f"LIVE FOURIER MONITOR: {ticker}")
@@ -160,7 +187,7 @@ class LiveFourierMonitor:
     def check_for_signals(self, analysis: FourierAnalysis) -> Optional[SignalPoint]:
         """
         Check if current conditions trigger a buy or sell signal.
-        Returns the most recent signal if one exists.
+        Returns the most recent signal if it's new (not from initial load).
         """
         signals = detect_overbought_oversold(
             analysis,
@@ -169,9 +196,17 @@ class LiveFourierMonitor:
         )
 
         if signals:
-            # Return the most recent signal
+            # Get the most recent signal
             latest_signal = signals[-1]
-            return latest_signal
+
+            # On initial load, just track the signal but don't alert
+            if self.initial_load:
+                self.last_signal_index = latest_signal.index
+                return None
+
+            # For subsequent updates, only return signal if it's newer than what we've seen
+            if self.last_signal_index is None or latest_signal.index > self.last_signal_index:
+                return latest_signal
 
         return None
 
@@ -188,6 +223,7 @@ class LiveFourierMonitor:
         # Update last signal tracking
         self.last_signal = signal.signal_type
         self.last_signal_time = current_time
+        self.last_signal_index = signal.index
 
         # Format alert message
         alert_type = "🔴 SELL SIGNAL" if signal.signal_type == 'sell' else "🟢 BUY SIGNAL"
@@ -399,6 +435,11 @@ class LiveFourierMonitor:
             if latest_signal:
                 self.trigger_alert(latest_signal, analysis)
 
+        # After first update, we're no longer in initial load
+        if self.initial_load:
+            self.initial_load = False
+            print(f"Initial plot constructed. Now monitoring for live signals during market hours...")
+
         # Create and return plot
         fig = self.create_plot(df, analysis, latest_signal)
 
@@ -546,56 +587,101 @@ if __name__ == "__main__":
     # Get user input or use defaults
     import sys
 
+    # Load cached settings
+    cached = load_cached_settings()
+
+    # Default values (will be overridden by cache if available)
+    defaults = {
+        'ticker': 'AAPL',
+        'n_harmonics': 17,
+        'smoothing_sigma': 0.0,
+        'overbought_threshold': 3.0,
+        'oversold_threshold': -5.0,
+        'tick_size': '1m',
+        'lookback_period': '5d',
+        'update_interval': 10,
+        'enable_alerts': True,
+        'alert_sound': False
+    }
+
+    # Merge cached settings with defaults
+    defaults.update(cached)
+
     if len(sys.argv) > 1:
         ticker = sys.argv[1]
     else:
-        ticker = input("Enter a stock ticker symbol (default: AAPL): ").strip().upper()
+        ticker = input(f"Enter a stock ticker symbol (default: {defaults['ticker']}): ").strip().upper()
         if not ticker:
-            ticker = "AAPL"
+            ticker = defaults['ticker']
 
-    # Prompt for parameters
+    # Prompt for parameters with cached defaults
     print("\nLive Fourier Monitor Configuration")
     print("-" * 40)
+    if cached:
+        print("(Previous settings loaded as defaults. Press Enter to use them)")
+        print("-" * 40)
 
     try:
-        n_harm = input(f"Harmonics (default: 17): ").strip()
-        n_harmonics = int(n_harm) if n_harm else 17
+        n_harm = input(f"Harmonics (default: {defaults['n_harmonics']}): ").strip()
+        n_harmonics = int(n_harm) if n_harm else defaults['n_harmonics']
 
-        smooth = input(f"Smoothing sigma (default: 0): ").strip()
-        smoothing_sigma = float(smooth) if smooth else 0.0
+        smooth = input(f"Smoothing sigma (default: {defaults['smoothing_sigma']}): ").strip()
+        smoothing_sigma = float(smooth) if smooth else defaults['smoothing_sigma']
 
-        overbought = input(f"Overbought threshold (default: 3.0): ").strip()
-        overbought_threshold = float(overbought) if overbought else 3.0
+        overbought = input(f"Overbought threshold (default: {defaults['overbought_threshold']}): ").strip()
+        overbought_threshold = float(overbought) if overbought else defaults['overbought_threshold']
 
-        oversold = input(f"Oversold threshold (default: -5.0): ").strip()
-        oversold_threshold = float(oversold) if oversold else -5.0
+        oversold = input(f"Oversold threshold (default: {defaults['oversold_threshold']}): ").strip()
+        oversold_threshold = float(oversold) if oversold else defaults['oversold_threshold']
 
-        tick = input(f"Tick size - 1m/5m/15m/30m/1h/1d (default: 1m): ").strip()
-        tick_size = tick if tick else '1m'
+        tick = input(f"Tick size - 1m/5m/15m/30m/1h/1d (default: {defaults['tick_size']}): ").strip()
+        tick_size = tick if tick else defaults['tick_size']
 
-        lookback = input(f"Lookback period - 1d/5d/1mo (default: 5d): ").strip()
-        lookback_period = lookback if lookback else '5d'
+        lookback = input(f"Lookback period - 1d/5d/1mo (default: {defaults['lookback_period']}): ").strip()
+        lookback_period = lookback if lookback else defaults['lookback_period']
 
-        interval = input(f"Update interval in seconds (default: 10): ").strip()
-        update_interval = int(interval) if interval else 10
+        interval = input(f"Update interval in seconds (default: {defaults['update_interval']}): ").strip()
+        update_interval = int(interval) if interval else defaults['update_interval']
 
-        alerts = input(f"Enable alerts? (y/n, default: y): ").strip().lower()
-        enable_alerts = alerts != 'n'
+        alerts = input(f"Enable alerts? (y/n, default: {'y' if defaults['enable_alerts'] else 'n'}): ").strip().lower()
+        if alerts:
+            enable_alerts = alerts == 'y'
+        else:
+            enable_alerts = defaults['enable_alerts']
 
-        sound = input(f"Alert sound? (y/n, default: n): ").strip().lower()
-        alert_sound = sound == 'y'
+        sound = input(f"Alert sound? (y/n, default: {'y' if defaults['alert_sound'] else 'n'}): ").strip().lower()
+        if sound:
+            alert_sound = sound == 'y'
+        else:
+            alert_sound = defaults['alert_sound']
 
     except ValueError:
         print("Invalid input, using defaults")
-        n_harmonics = 11
-        smoothing_sigma = 0.0
-        overbought_threshold = 3.0
-        oversold_threshold = -5.0
-        tick_size = '1m'
-        lookback_period = '5d'
-        update_interval = 60
-        enable_alerts = True
-        alert_sound = False
+        ticker = defaults['ticker']
+        n_harmonics = defaults['n_harmonics']
+        smoothing_sigma = defaults['smoothing_sigma']
+        overbought_threshold = defaults['overbought_threshold']
+        oversold_threshold = defaults['oversold_threshold']
+        tick_size = defaults['tick_size']
+        lookback_period = defaults['lookback_period']
+        update_interval = defaults['update_interval']
+        enable_alerts = defaults['enable_alerts']
+        alert_sound = defaults['alert_sound']
+
+    # Save current settings for next run
+    current_settings = {
+        'ticker': ticker,
+        'n_harmonics': n_harmonics,
+        'smoothing_sigma': smoothing_sigma,
+        'overbought_threshold': overbought_threshold,
+        'oversold_threshold': oversold_threshold,
+        'tick_size': tick_size,
+        'lookback_period': lookback_period,
+        'update_interval': update_interval,
+        'enable_alerts': enable_alerts,
+        'alert_sound': alert_sound
+    }
+    save_settings(current_settings)
 
     # Start monitoring
     live_fourier_monitor(
