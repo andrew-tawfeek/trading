@@ -592,6 +592,7 @@ if __name__ == "__main__":
         overbought_threshold = 3.0
         oversold_threshold = -5.0
         tick_size = '1m'
+        lookback_period = '5d'
         update_interval = 60
         enable_alerts = True
         alert_sound = False
@@ -604,6 +605,7 @@ if __name__ == "__main__":
         overbought_threshold=overbought_threshold,
         oversold_threshold=oversold_threshold,
         tick_size=tick_size,
+        lookback_period=lookback_period,
         update_interval=update_interval,
         enable_alerts=enable_alerts,
         alert_sound=alert_sound,
