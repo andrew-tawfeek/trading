@@ -228,7 +228,8 @@ def find_fourier_peaks(analysis: FourierAnalysis,
 
 def detect_overbought_oversold(analysis: FourierAnalysis,
                                 overbought_threshold: float,
-                                oversold_threshold: float) -> List[SignalPoint]:
+                                oversold_threshold: float,
+                                signal_on_exit: bool = False) -> List[SignalPoint]:
     """
     Detect buy/sell signals based on overbought/oversold thresholds.
 
@@ -240,6 +241,9 @@ def detect_overbought_oversold(analysis: FourierAnalysis,
         Detrended Fourier value above which is considered overbought (sell signal)
     oversold_threshold : float
         Detrended Fourier value below which is considered oversold (buy signal)
+    signal_on_exit : bool
+        If True, signal when LEAVING the zone (reversal confirmed).
+        If False, signal when ENTERING the zone (early entry). Default is False.
 
     Returns:
     --------
@@ -250,29 +254,55 @@ def detect_overbought_oversold(analysis: FourierAnalysis,
     detrended = analysis.detrended_fourier
 
     for i in range(1, len(detrended)):
-        # Check for oversold crossing (buy signal)
-        if detrended[i-1] > oversold_threshold and detrended[i] <= oversold_threshold:
-            signals.append(SignalPoint(
-                date=analysis.dates[i],
-                index=i,
-                price=analysis.prices[i],
-                fourier_value=analysis.fourier_prices[i],
-                detrended_value=detrended[i],
-                signal_type='buy',
-                reason='oversold'
-            ))
+        if signal_on_exit:
+            # Signal on EXIT from oversold zone (buy when recovering)
+            if detrended[i-1] <= oversold_threshold and detrended[i] > oversold_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='buy',
+                    reason='oversold_exit'
+                ))
 
-        # Check for overbought crossing (sell signal)
-        elif detrended[i-1] < overbought_threshold and detrended[i] >= overbought_threshold:
-            signals.append(SignalPoint(
-                date=analysis.dates[i],
-                index=i,
-                price=analysis.prices[i],
-                fourier_value=analysis.fourier_prices[i],
-                detrended_value=detrended[i],
-                signal_type='sell',
-                reason='overbought'
-            ))
+            # Signal on EXIT from overbought zone (sell when declining)
+            elif detrended[i-1] >= overbought_threshold and detrended[i] < overbought_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='sell',
+                    reason='overbought_exit'
+                ))
+        else:
+            # Original behavior: signal on ENTRY to zone
+            # Check for oversold crossing (buy signal)
+            if detrended[i-1] > oversold_threshold and detrended[i] <= oversold_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='buy',
+                    reason='oversold'
+                ))
+
+            # Check for overbought crossing (sell signal)
+            elif detrended[i-1] < overbought_threshold and detrended[i] >= overbought_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='sell',
+                    reason='overbought'
+                ))
 
     return signals
 
@@ -334,7 +364,8 @@ def detect_peak_signals(analysis: FourierAnalysis,
 
 def backtest_signals(signals: List[SignalPoint],
                      initial_capital: float = 10000.0,
-                     shares_per_trade: Optional[int] = None) -> Dict:
+                     shares_per_trade: Optional[int] = None,
+                     prices: Optional[np.ndarray] = None) -> Dict:
     """
     Backtest a trading strategy based on signal points.
 
@@ -346,6 +377,8 @@ def backtest_signals(signals: List[SignalPoint],
         Starting capital
     shares_per_trade : int, optional
         Fixed number of shares to trade. If None, uses all available capital.
+    prices : np.ndarray, optional
+        Full price array for final valuation (prevents look-ahead bias)
 
     Returns:
     --------
@@ -402,8 +435,14 @@ def backtest_signals(signals: List[SignalPoint],
             'value': portfolio_value
         })
 
-    # Calculate final portfolio value (at last signal price)
-    final_price = signals[-1].price if signals else 0
+    # Calculate final portfolio value using last known price (prevents look-ahead bias)
+    if prices is not None and len(prices) > 0:
+        final_price = prices[-1]
+    elif signals:
+        final_price = signals[-1].price
+    else:
+        final_price = 0
+    
     final_value = capital + (shares * final_price)
 
     return {
@@ -878,6 +917,87 @@ if __name__ == "__main__":
 
 
 # ========================================
+# Trend Analysis Helper Functions
+# ========================================
+
+def get_trend_direction(prices: np.ndarray, lookback: int = 20) -> str:
+    """
+    Determine overall trend using simple moving average slope.
+    
+    Parameters:
+    -----------
+    prices : np.ndarray
+        Price array
+    lookback : int
+        Number of periods to look back for trend calculation
+    
+    Returns:
+    --------
+    str
+        'bullish', 'bearish', or 'neutral'
+    """
+    if len(prices) < lookback:
+        return 'neutral'
+    
+    recent = prices[-lookback:]
+    slope = (recent[-1] - recent[0]) / recent[0] * 100  # Percentage change
+    
+    if slope > 5:  # 5% gain over lookback period
+        return 'bullish'
+    elif slope < -5:  # 5% loss over lookback period
+        return 'bearish'
+    return 'neutral'
+
+
+def filter_signals_by_trend(signals: List[SignalPoint], 
+                            prices: np.ndarray,
+                            filter_mode: str = 'with_trend',
+                            lookback: int = 20) -> List[SignalPoint]:
+    """
+    Filter signals based on trend direction.
+    
+    Parameters:
+    -----------
+    signals : List[SignalPoint]
+        List of trading signals
+    prices : np.ndarray
+        Price array
+    filter_mode : str
+        'with_trend': Only allow calls in uptrend, puts in downtrend
+        'counter_trend': Only allow calls in downtrend, puts in uptrend (mean reversion)
+        'none': No filtering
+    lookback : int
+        Lookback period for trend calculation
+    
+    Returns:
+    --------
+    List[SignalPoint]
+        Filtered signals
+    """
+    if filter_mode == 'none':
+        return signals
+    
+    filtered = []
+    for signal in signals:
+        trend = get_trend_direction(prices[:signal.index+1], lookback=lookback)
+        
+        if filter_mode == 'with_trend':
+            # Only take signals that align with trend
+            if signal.signal_type == 'buy' and trend != 'bearish':
+                filtered.append(signal)
+            elif signal.signal_type == 'sell' and trend != 'bullish':
+                filtered.append(signal)
+        elif filter_mode == 'counter_trend':
+            # Only take mean-reversion signals
+            if signal.signal_type == 'buy' and trend == 'bearish':
+                filtered.append(signal)
+            elif signal.signal_type == 'sell' and trend == 'bullish':
+                filtered.append(signal)
+    
+    return filtered
+
+
+# ========================================
 # Options Trading Data Classes
 # ========================================
 
@@ -929,6 +1049,46 @@ class OptionsBacktestResults:
 # ========================================
 # Options Backtesting Core Functions
 # ========================================
+
+def calculate_contracts(capital: float, option_price: float, 
+                        max_risk_percent: float = 10.0,
+                        min_contracts: int = 1,
+                        max_contracts: int = 10) -> int:
+    """
+    Calculate optimal number of contracts based on available capital.
+    
+    Parameters:
+    -----------
+    capital : float
+        Available capital
+    option_price : float
+        Price per share (will be multiplied by 100 for contract cost)
+    max_risk_percent : float
+        Maximum percentage of capital to risk per trade (default: 10%)
+    min_contracts : int
+        Minimum contracts (default: 1, use 0 if can't afford)
+    max_contracts : int
+        Maximum contracts regardless of capital (default: 10)
+    
+    Returns:
+    --------
+    int
+        Number of contracts to buy (0 if can't afford)
+    """
+    if option_price <= 0 or capital <= 0:
+        return 0
+    
+    cost_per_contract = option_price * 100
+    max_capital_to_use = capital * (max_risk_percent / 100)
+    
+    if cost_per_contract > capital:
+        return 0  # Can't afford even one contract
+    
+    affordable_contracts = int(max_capital_to_use // cost_per_contract)
+    
+    return max(min_contracts if affordable_contracts > 0 else 0, 
+               min(affordable_contracts, max_contracts))
+
 
 def get_option_strike_price(stock_price: float, option_type: str,
                             otm_percent: float = 2.0) -> float:
@@ -994,6 +1154,39 @@ def get_option_strike_price(stock_price: float, option_type: str,
     return rounded_strike
 
 
+def get_third_friday(year: int, month: int) -> datetime:
+    """
+    Get the third Friday of a given month (standard monthly option expiration).
+    
+    Parameters:
+    -----------
+    year : int
+        Year
+    month : int
+        Month (1-12)
+    
+    Returns:
+    --------
+    datetime
+        The third Friday of the month
+    """
+    from datetime import datetime, timedelta
+    
+    # First day of the month
+    first_day = datetime(year, month, 1)
+    
+    # Find first Friday
+    days_until_friday = (4 - first_day.weekday()) % 7
+    if days_until_friday == 0 and first_day.weekday() != 4:
+        days_until_friday = 7
+    first_friday = first_day + timedelta(days=days_until_friday)
+    
+    # Third Friday is 14 days after first Friday
+    third_friday = first_friday + timedelta(days=14)
+    
+    return third_friday
+
+
 def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, ticker: str = None) -> str:
     """
     Get the option expiration date approximately days_to_expiry days from current_date.
@@ -1027,6 +1220,10 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
         # Try converting with pandas
         current_date = pd.Timestamp(current_date).to_pydatetime()
 
+    # Remove timezone info if present (for consistent comparison)
+    if current_date.tzinfo is not None:
+        current_date = current_date.replace(tzinfo=None)
+
     # Calculate target expiration date
     target_expiration = current_date + timedelta(days=days_to_expiry)
 
@@ -1046,6 +1243,13 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
 
     expiration = target_expiration + timedelta(days=days_until_friday)
 
+    # Validate: expiration should be within a reasonable range
+    # (not more than 2 years out for standard options)
+    max_expiration = current_date + timedelta(days=730)
+    if expiration > max_expiration:
+        # Fall back to monthly expiration (3rd Friday of target month)
+        expiration = get_third_friday(target_expiration.year, target_expiration.month)
+
     return expiration.strftime('%Y-%m-%d')
 
 
@@ -1059,6 +1263,9 @@ def backtest_options_signals(ticker: str,
                              days_to_expiry: int = 30,
                              otm_percent: float = 2.0,
                              max_positions: int = 1,
+                             commission_per_contract: float = 0.65,
+                             slippage_percent: float = 1.0,
+                             min_days_between_trades: int = 3,
                              verbose: bool = True,
                              use_cached_pricing: bool = True) -> OptionsBacktestResults:
     """
@@ -1091,8 +1298,16 @@ def backtest_options_signals(ticker: str,
         Out-of-the-money percentage for strike selection (default: 2%)
     max_positions : int
         Maximum number of open positions at once (default: 1)
+    commission_per_contract : float
+        Commission per contract in dollars (default: $0.65)
+    slippage_percent : float
+        Percentage slippage on entry/exit prices (default: 1%)
+    min_days_between_trades : int
+        Minimum days between opening new positions (cooldown, default: 3)
     verbose : bool
         Print detailed trade information (default: True)
+    use_cached_pricing : bool
+        Use cached option prices for faster backtesting (default: True)
 
     Returns:
     --------
@@ -1164,6 +1379,47 @@ def backtest_options_signals(ticker: str,
 
                 # Calculate P&L
                 pnl_percent = ((current_option_price - pos.entry_price) / pos.entry_price) * 100
+
+                # Check if option is expiring soon (close 2 days before expiration)
+                try:
+                    exp_date = datetime.strptime(pos.expiration_date, '%Y-%m-%d')
+                    days_to_exp = (exp_date.date() - current_date.date()).days
+                    
+                    if days_to_exp <= 2:
+                        if verbose:
+                            print(f"[{current_date.strftime('%Y-%m-%d')}] EXPIRATION: {pos.option_type.upper()} "
+                                  f"${pos.strike_price} exp {pos.expiration_date}")
+                            print(f"  Entry: ${pos.entry_price:.2f} → Exit: ${current_option_price:.2f} "
+                                  f"({pnl_percent:.1f}%)")
+
+                        pos.exit_date = current_date
+                        pos.exit_index = signal.index
+                        pos.exit_price = current_option_price
+                        pos.exit_stock_price = current_price
+                        pos.exit_reason = 'expiration'
+                        pos.pnl_percent = pnl_percent
+                        pos.pnl_dollar = (current_option_price - pos.entry_price) * 100 * contracts_per_trade
+                        pos.days_held = (current_date - pos.entry_date).days
+
+                        # Get Greeks at exit
+                        greeks_key = (pos.expiration_date, pos.strike_price, pos.option_type, current_date.strftime('%Y-%m-%d'))
+                        try:
+                            if greeks_key in greeks_cache:
+                                pos.greeks_at_exit = greeks_cache[greeks_key]
+                            else:
+                                pos.greeks_at_exit = greeks_historical(
+                                    ticker, pos.expiration_date, pos.strike_price,
+                                    pos.option_type, current_date.strftime('%Y-%m-%d')
+                                )
+                                greeks_cache[greeks_key] = pos.greeks_at_exit
+                        except:
+                            pos.greeks_at_exit = None
+
+                        positions_to_close.append(pos)
+                        capital += current_option_price * 100 * contracts_per_trade
+                        continue  # Skip other exit checks
+                except:
+                    pass  # If date parsing fails, continue with other checks
 
                 # Check stop-loss
                 if current_option_price <= pos.entry_price * (1 - stoploss_percent / 100):
