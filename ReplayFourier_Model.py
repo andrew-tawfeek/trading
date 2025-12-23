@@ -379,13 +379,21 @@ class ReplayOptionsModel:
         int
             Number of contracts to trade (0 if cannot afford any within risk limits)
         """
+        # Absolute maximum contracts to prevent unrealistic positions
+        MAX_CONTRACTS = 100
+        
         max_cost = self.capital * (max_risk_percent / 100)
         cost_per_contract = option_price * 100
 
         if cost_per_contract > max_cost:
             return 0  # Can't afford even 1 contract within risk limits
 
-        return max(1, int(max_cost // cost_per_contract))
+        calculated_contracts = int(max_cost // cost_per_contract)
+        
+        # Apply maximum limit
+        contracts = min(calculated_contracts, MAX_CONTRACTS)
+        
+        return max(1, contracts)
 
     def handle_signal(self, signal: SignalPoint, current_date: datetime, close_prices: np.ndarray):
         """
@@ -447,9 +455,10 @@ class ReplayOptionsModel:
                 option_type, current_date.strftime('%Y-%m-%d')
             )
 
-            # Validate price
-            if entry_price is None or entry_price == 0:
-                print(f"  Warning: No valid historical option price found")
+            # Validate price with minimum threshold
+            MIN_OPTION_PRICE = 0.01  # $0.01 minimum per share
+            if entry_price is None or entry_price < MIN_OPTION_PRICE:
+                print(f"  Warning: Invalid option price (${entry_price if entry_price else 0:.4f}) - must be >= ${MIN_OPTION_PRICE}")
                 return
 
             # Calculate position size (use dynamic sizing instead of fixed contracts_per_trade)
@@ -465,6 +474,16 @@ class ReplayOptionsModel:
 
             # Calculate cost
             cost = entry_price * 100 * contracts_to_trade
+
+            # Sanity check: prevent unrealistic positions
+            max_reasonable_cost = self.initial_capital * 10  # Never risk more than 10x initial capital
+            if cost > max_reasonable_cost:
+                print(f"[{current_date.strftime('%Y-%m-%d %H:%M:%S')}] UNREALISTIC POSITION BLOCKED")
+                print(f"  Calculated cost: ${cost:,.2f}")
+                print(f"  Entry price: ${entry_price:.4f}/share")
+                print(f"  Contracts: {contracts_to_trade:,}")
+                print(f"  Max reasonable cost: ${max_reasonable_cost:,.2f}")
+                return
 
             # Double-check we have enough capital
             if self.capital < cost:
@@ -548,9 +567,24 @@ class ReplayOptionsModel:
                     current_date.strftime('%Y-%m-%d')
                 )
 
-                # Validate price
-                if current_price is None or current_price == 0:
-                    print(f"  Warning: Could not get historical price for {position.option_type} ${position.strike_price}")
+                # Validate price with minimum threshold
+                MIN_OPTION_PRICE = 0.01
+                if current_price is None or current_price < MIN_OPTION_PRICE:
+                    print(f"  Warning: Invalid price (${current_price if current_price else 0:.4f}) for {position.option_type} ${position.strike_price}")
+                    continue
+                
+                # Additional check: if entry price was invalid, close the position at minimal loss
+                if position.entry_price < MIN_OPTION_PRICE:
+                    print(f"  Warning: Position has invalid entry price ${position.entry_price:.4f}, force closing")
+                    # Force close at minimal loss to clean up bad position
+                    revenue = MIN_OPTION_PRICE * 100 * position.contracts
+                    self.capital += revenue
+                    position.exit_date = current_date
+                    position.exit_price = MIN_OPTION_PRICE
+                    position.exit_reason = 'invalid_entry'
+                    position.pnl_percent = -99.0
+                    position.pnl_dollar = revenue - position.cost
+                    positions_to_close.append(position)
                     continue
 
                 # Calculate P&L
