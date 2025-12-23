@@ -177,7 +177,7 @@ class LiveOptionsModel:
 
         current_price = signal.price
         strike_price = get_option_strike_price(current_price, option_type, self.otm_percent)
-        expiration_date = get_option_expiration(current_time, self.days_to_expiry)
+        expiration_date = get_option_expiration(current_time, self.days_to_expiry, self.ticker)
 
         try:
             # Get option price

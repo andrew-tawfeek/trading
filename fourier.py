@@ -960,16 +960,19 @@ def get_option_strike_price(stock_price: float, option_type: str,
     return round(strike)
 
 
-def get_option_expiration(current_date: datetime, days_to_expiry: int = 30) -> str:
+def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, ticker: str = None) -> str:
     """
-    Calculate option expiration date.
+    Get the closest available option expiration date.
 
     Parameters:
     -----------
     current_date : datetime
         Current date (can be datetime or numpy.datetime64)
     days_to_expiry : int
-        Days until expiration (default: 30)
+        Target days until expiration (default: 30)
+    ticker : str, optional
+        Stock ticker symbol. If provided, returns actual available expiration.
+        If None, returns calculated date (may not be a valid expiration).
 
     Returns:
     --------
@@ -978,6 +981,7 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30) -> s
     """
     from datetime import timedelta, datetime as dt
     import pandas as pd
+    import yfinance as yf
 
     # Convert numpy.datetime64 to Python datetime if needed
     if isinstance(current_date, pd.Timestamp) or hasattr(current_date, 'to_pydatetime'):
@@ -986,8 +990,42 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30) -> s
         # Try converting with pandas
         current_date = pd.Timestamp(current_date).to_pydatetime()
 
-    expiration = current_date + timedelta(days=days_to_expiry)
-    return expiration.strftime('%Y-%m-%d')
+    # Calculate target expiration date
+    target_expiration = current_date + timedelta(days=days_to_expiry)
+
+    # If ticker provided, find closest actual expiration
+    if ticker:
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            available_expirations = ticker_obj.options
+
+            if not available_expirations:
+                # No options available, return calculated date
+                return target_expiration.strftime('%Y-%m-%d')
+
+            # Convert available expirations to datetime objects
+            expiration_dates = [dt.strptime(exp, '%Y-%m-%d') for exp in available_expirations]
+
+            # Find the closest expiration to our target that is >= current_date
+            future_expirations = [exp for exp in expiration_dates if exp > current_date]
+
+            if not future_expirations:
+                # No future expirations available
+                return target_expiration.strftime('%Y-%m-%d')
+
+            # Find closest to target
+            closest_expiration = min(future_expirations,
+                                    key=lambda x: abs((x - target_expiration).days))
+
+            return closest_expiration.strftime('%Y-%m-%d')
+
+        except Exception as e:
+            # If there's any error fetching options, return calculated date
+            print(f"  Warning: Could not fetch available expirations: {e}")
+            return target_expiration.strftime('%Y-%m-%d')
+
+    # No ticker provided, return calculated date
+    return target_expiration.strftime('%Y-%m-%d')
 
 
 def backtest_options_signals(ticker: str,
@@ -1231,7 +1269,7 @@ def backtest_options_signals(ticker: str,
 
             # Calculate strike price and expiration
             strike_price = get_option_strike_price(current_price, option_type, otm_percent)
-            expiration_date = get_option_expiration(current_date, days_to_expiry)
+            expiration_date = get_option_expiration(current_date, days_to_expiry, ticker)
 
             # Get option price (with caching)
             try:
@@ -1838,7 +1876,7 @@ def monitor_fourier_signals_live(api, ticker, n_harmonics=10, smoothing_sigma=2.
                     # Calculate strike and expiration
                     current_price = latest_signal.price
                     strike_price = get_option_strike_price(current_price, option_type, otm_percent)
-                    expiration_date = get_option_expiration(datetime.now(), days_to_expiry)
+                    expiration_date = get_option_expiration(datetime.now(), days_to_expiry, ticker)
 
                     # Get current option quote
                     symbol = get_alpaca_option_symbol(ticker, expiration_date, strike_price, option_type)
