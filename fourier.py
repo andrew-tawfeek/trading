@@ -483,6 +483,13 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
 
     dates = stock_data.index
 
+    # Convert dates to string labels for x-axis to eliminate gaps
+    date_labels = [d.strftime('%Y-%m-%d %H:%M' if tick_size in ['1m', '2m', '5m', '15m', '30m', '1h', '90m'] else '%Y-%m-%d')
+                   for d in dates]
+
+    # Create integer indices for plotting (removes gaps automatically)
+    x_indices = list(range(len(dates)))
+
     # Determine if we need subplots based on fourier parameter
     if fourier:
         # Create figure with subplots: main plot + detrended Fourier
@@ -499,23 +506,26 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
     # Add stock price chart (candlestick or line)
     if use_candlestick:
         fig.add_trace(go.Candlestick(
-            x=dates,
+            x=x_indices,
             open=open_prices,
             high=high_prices,
             low=low_prices,
             close=close_prices,
             name=f'{ticker}',
             increasing_line_color='green',
-            decreasing_line_color='red'
+            decreasing_line_color='red',
+            customdata=date_labels,
+            hovertemplate='<b>Date</b>: %{customdata}<br><b>Open</b>: $%{open:.2f}<br><b>High</b>: $%{high:.2f}<br><b>Low</b>: $%{low:.2f}<br><b>Close</b>: $%{close:.2f}<extra></extra>'
         ), row=1, col=1)
     else:
         fig.add_trace(go.Scatter(
-            x=dates,
+            x=x_indices,
             y=close_prices,
             mode='lines',
             name=f'{ticker} Close Price',
             line=dict(color='blue', width=2),
-            hovertemplate='<b>Date</b>: %{x}<br><b>Price</b>: $%{y:.2f}<extra></extra>'
+            customdata=date_labels,
+            hovertemplate='<b>Date</b>: %{customdata}<br><b>Price</b>: $%{y:.2f}<extra></extra>'
         ), row=1, col=1)
 
     # Add Fourier curve(s) if requested
@@ -538,24 +548,26 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
 
             # Add Fourier curve to main plot
             fig.add_trace(go.Scatter(
-                x=dates,
+                x=x_indices,
                 y=analysis.fourier_prices,
                 mode='lines',
                 name=f'Fourier {n_harm}h',
                 line=dict(color=color, width=2, dash='dash'),
-                hovertemplate=f'<b>Date</b>: %{{x}}<br><b>Fourier {n_harm}h</b>: $%{{y:.2f}}<extra></extra>',
+                customdata=date_labels,
+                hovertemplate=f'<b>Date</b>: %{{customdata}}<br><b>Fourier {n_harm}h</b>: $%{{y:.2f}}<extra></extra>',
                 visible=True,
                 legendgroup=f'fourier_{n_harm}'
             ), row=1, col=1)
 
             # Add detrended Fourier curve to bottom plot (centered around 0)
             fig.add_trace(go.Scatter(
-                x=dates,
+                x=x_indices,
                 y=analysis.detrended_fourier,
                 mode='lines',
                 name=f'Fourier {n_harm}h (detrended)',
                 line=dict(color=color, width=2),
-                hovertemplate=f'<b>Date</b>: %{{x}}<br><b>Deviation</b>: $%{{y:.2f}}<extra></extra>',
+                customdata=date_labels,
+                hovertemplate=f'<b>Date</b>: %{{customdata}}<br><b>Deviation</b>: $%{{y:.2f}}<extra></extra>',
                 visible=True,
                 legendgroup=f'fourier_{n_harm}',
                 showlegend=False
@@ -593,27 +605,40 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
 
                 # Add buy markers
                 if buy_signals:
+                    buy_indices = [s.index for s in buy_signals]
+                    buy_dates_str = [date_labels[s.index] for s in buy_signals]
                     fig.add_trace(go.Scatter(
-                        x=[s.date for s in buy_signals],
+                        x=buy_indices,
                         y=[s.price for s in buy_signals],
                         mode='markers',
                         name='Buy Signal',
                         marker=dict(color='green', size=12, symbol='triangle-up'),
-                        hovertemplate='<b>BUY</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+                        customdata=buy_dates_str,
+                        hovertemplate='<b>BUY</b><br>Date: %{customdata}<br>Price: $%{y:.2f}<extra></extra>'
                     ), row=1, col=1)
 
                 # Add sell markers
                 if sell_signals:
+                    sell_indices = [s.index for s in sell_signals]
+                    sell_dates_str = [date_labels[s.index] for s in sell_signals]
                     fig.add_trace(go.Scatter(
-                        x=[s.date for s in sell_signals],
+                        x=sell_indices,
                         y=[s.price for s in sell_signals],
                         mode='markers',
                         name='Sell Signal',
                         marker=dict(color='red', size=12, symbol='triangle-down'),
-                        hovertemplate='<b>SELL</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+                        customdata=sell_dates_str,
+                        hovertemplate='<b>SELL</b><br>Date: %{customdata}<br>Price: $%{y:.2f}<extra></extra>'
                     ), row=1, col=1)
 
                 print(f"\nDetected {len(buy_signals)} buy signals and {len(sell_signals)} sell signals")
+
+    # Set up custom tick labels for x-axis using date strings
+    # Show fewer ticks for better readability
+    n_ticks = min(10, len(date_labels))
+    tick_step = max(1, len(date_labels) // n_ticks)
+    tickvals = list(range(0, len(date_labels), tick_step))
+    ticktext = [date_labels[i] for i in tickvals]
 
     # Update layout based on whether we have subplots
     if fourier:
@@ -628,18 +653,20 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
         # Update y-axes labels
         fig.update_yaxes(title_text="Price ($)", row=1, col=1)
         fig.update_yaxes(title_text="Deviation ($)", row=2, col=1)
-        # Update x-axes
-        fig.update_xaxes(title_text="Date", row=2, col=1)
+        # Update x-axes with custom tick labels
         fig.update_xaxes(
-            rangeselector=dict(
-                buttons=list([
-                    dict(count=1, label="1m", step="month", stepmode="backward"),
-                    dict(count=3, label="3m", step="month", stepmode="backward"),
-                    dict(count=6, label="6m", step="month", stepmode="backward"),
-                    dict(count=1, label="1y", step="year", stepmode="backward"),
-                    dict(step="all", label="All")
-                ])
-            ),
+            title_text="Date",
+            tickmode='array',
+            tickvals=tickvals,
+            ticktext=ticktext,
+            tickangle=-45,
+            row=2, col=1
+        )
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=tickvals,
+            ticktext=ticktext,
+            tickangle=-45,
             row=1, col=1
         )
     else:
@@ -652,17 +679,11 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
             showlegend=True,
             height=600,
             xaxis=dict(
-                rangeselector=dict(
-                    buttons=list([
-                        dict(count=1, label="1m", step="month", stepmode="backward"),
-                        dict(count=3, label="3m", step="month", stepmode="backward"),
-                        dict(count=6, label="6m", step="month", stepmode="backward"),
-                        dict(count=1, label="1y", step="year", stepmode="backward"),
-                        dict(step="all", label="All")
-                    ])
-                ),
-                rangeslider=dict(visible=True),
-                type="date"
+                tickmode='array',
+                tickvals=tickvals,
+                ticktext=ticktext,
+                tickangle=-45,
+                rangeslider=dict(visible=True)
             )
         )
 
