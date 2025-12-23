@@ -1,0 +1,563 @@
+Looking at `fourier.py` in detail, here are the issues and recommended fixes:
+
+---
+
+## Critical Issues
+
+### 1. **`get_option_expiration()` - Returns dates too far in the future**
+
+**Location:** Lines 757-792
+
+**Problem:** The function works correctly for *future* dates, but in historical replay, it's being called with past dates and returning expirations that may not have existed or are unrealistically far out (as seen in your logs where everything expired on 2025-12-26).
+
+**Root Cause:** The function calculates the *next* Friday from the target date, but doesn't validate that this expiration actually existed in the options chain historically.
+
+**Fix:**
+```python
+def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, ticker: str = None) -> str:
+    """
+    Get the option expiration date approximately days_to_expiry days from current_date.
+    """
+    from datetime import timedelta, datetime as dt
+    import pandas as pd
+
+    # Convert numpy.datetime64 to Python datetime if needed
+    if isinstance(current_date, pd.Timestamp) or hasattr(current_date, 'to_pydatetime'):
+        current_date = current_date.to_pydatetime()
+    elif not isinstance(current_date, dt):
+        current_date = pd.Timestamp(current_date).to_pydatetime()
+
+    # Remove timezone info if present (for consistent comparison)
+    if current_date.tzinfo is not None:
+        current_date = current_date.replace(tzinfo=None)
+
+    # Calculate target expiration date
+    target_expiration = current_date + timedelta(days=days_to_expiry)
+
+    # Find the next Friday (options typically expire on Fridays)
+    days_until_friday = (4 - target_expiration.weekday()) % 7
+    if days_until_friday == 0 and target_expiration.weekday() != 4:
+        days_until_friday = 7
+
+    expiration = target_expiration + timedelta(days=days_until_friday)
+
+    # Validate: expiration should be within a reasonable range
+    # (not more than 2 years out for standard options)
+    max_expiration = current_date + timedelta(days=730)
+    if expiration > max_expiration:
+        # Fall back to monthly expiration (3rd Friday of target month)
+        expiration = get_third_friday(target_expiration.year, target_expiration.month)
+
+    return expiration.strftime('%Y-%m-%d')
+
+
+def get_third_friday(year: int, month: int) -> datetime:
+    """Get the third Friday of a given month (standard monthly expiration)."""
+    from datetime import datetime, timedelta
+    
+    # First day of the month
+    first_day = datetime(year, month, 1)
+    
+    # Find first Friday
+    days_until_friday = (4 - first_day.weekday()) % 7
+    first_friday = first_day + timedelta(days=days_until_friday)
+    
+    # Third Friday is 14 days after first Friday
+    third_friday = first_friday + timedelta(days=14)
+    
+    return third_friday
+```
+
+---
+
+### 2. **`backtest_options_signals()` - No expiration monitoring during backtest**
+
+**Location:** Lines 855-1080
+
+**Problem:** The function checks for stop-loss, take-profit, and signal reversals, but it only closes positions at expiration *after* the signal loop ends. This means positions can be held past expiration during the backtest loop.
+
+**Fix:** Add expiration check inside the position monitoring loop:
+```python
+# Inside the for pos in open_positions loop, add this check:
+
+# Check if option is expiring soon (close 2 days before expiration)
+try:
+    exp_date = datetime.strptime(pos.expiration_date, '%Y-%m-%d')
+    days_to_exp = (exp_date - current_date).days
+    
+    if days_to_exp <= 2:
+        if verbose:
+            print(f"[{current_date.strftime('%Y-%m-%d')}] EXPIRATION: {pos.option_type.upper()} "
+                  f"${pos.strike_price} exp {pos.expiration_date}")
+            print(f"  Entry: ${pos.entry_price:.2f} → Exit: ${current_option_price:.2f} "
+                  f"({pnl_percent:.1f}%)")
+
+        pos.exit_date = current_date
+        pos.exit_index = signal.index
+        pos.exit_price = current_option_price
+        pos.exit_stock_price = current_price
+        pos.exit_reason = 'expiration'
+        pos.pnl_percent = pnl_percent
+        pos.pnl_dollar = (current_option_price - pos.entry_price) * 100 * contracts_per_trade
+        pos.days_held = (current_date - pos.entry_date).days
+
+        positions_to_close.append(pos)
+        capital += current_option_price * 100 * contracts_per_trade
+        continue  # Skip other exit checks
+except:
+    pass
+```
+
+---
+
+### 3. **`detect_overbought_oversold()` - Signal detection is backwards**
+
+**Location:** Lines 267-299
+
+**Problem:** The current logic triggers signals when the detrended value *crosses* the threshold, but this can miss the actual peak/trough. The signal fires when entering the zone, not when leaving it (which would be the actual reversal point).
+
+**Current behavior:**
+- Buy signal: When detrended crosses *below* oversold threshold (entering oversold)
+- Sell signal: When detrended crosses *above* overbought threshold (entering overbought)
+
+**Better approach:** Signal when *leaving* the zone (actual reversal):
+```python
+def detect_overbought_oversold(analysis: FourierAnalysis,
+                                overbought_threshold: float,
+                                oversold_threshold: float,
+                                signal_on_exit: bool = True) -> List[SignalPoint]:
+    """
+    Detect buy/sell signals based on overbought/oversold thresholds.
+
+    Parameters:
+    -----------
+    signal_on_exit : bool
+        If True, signal when leaving the zone (reversal confirmed).
+        If False, signal when entering the zone (early entry).
+    """
+    signals = []
+    detrended = analysis.detrended_fourier
+
+    for i in range(1, len(detrended)):
+        if signal_on_exit:
+            # Signal on EXIT from oversold zone (buy when recovering)
+            if detrended[i-1] <= oversold_threshold and detrended[i] > oversold_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='buy',
+                    reason='oversold_exit'
+                ))
+
+            # Signal on EXIT from overbought zone (sell when declining)
+            elif detrended[i-1] >= overbought_threshold and detrended[i] < overbought_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='sell',
+                    reason='overbought_exit'
+                ))
+        else:
+            # Original behavior: signal on ENTRY
+            if detrended[i-1] > oversold_threshold and detrended[i] <= oversold_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='buy',
+                    reason='oversold'
+                ))
+
+            elif detrended[i-1] < overbought_threshold and detrended[i] >= overbought_threshold:
+                signals.append(SignalPoint(
+                    date=analysis.dates[i],
+                    index=i,
+                    price=analysis.prices[i],
+                    fourier_value=analysis.fourier_prices[i],
+                    detrended_value=detrended[i],
+                    signal_type='sell',
+                    reason='overbought'
+                ))
+
+    return signals
+```
+
+---
+
+## Medium Priority Issues
+
+### 4. **No trend filter to avoid counter-trend trades**
+
+**Location:** `backtest_options_signals()` and `run_fourier_options_backtest()`
+
+**Problem:** The model buys puts in a strong uptrend and calls in a strong downtrend, leading to many stop-losses.
+
+**Fix:** Add trend filtering:
+```python
+def get_trend_direction(prices: np.ndarray, lookback: int = 20) -> str:
+    """Determine overall trend using simple moving average slope."""
+    if len(prices) < lookback:
+        return 'neutral'
+    
+    recent = prices[-lookback:]
+    slope = (recent[-1] - recent[0]) / recent[0] * 100  # Percentage change
+    
+    if slope > 5:  # 5% gain over lookback period
+        return 'bullish'
+    elif slope < -5:  # 5% loss over lookback period
+        return 'bearish'
+    return 'neutral'
+
+
+def filter_signals_by_trend(signals: List[SignalPoint], 
+                            prices: np.ndarray,
+                            filter_mode: str = 'with_trend') -> List[SignalPoint]:
+    """
+    Filter signals based on trend.
+    
+    filter_mode:
+        'with_trend': Only allow calls in uptrend, puts in downtrend
+        'counter_trend': Only allow calls in downtrend, puts in uptrend (mean reversion)
+        'none': No filtering
+    """
+    if filter_mode == 'none':
+        return signals
+    
+    filtered = []
+    for signal in signals:
+        trend = get_trend_direction(prices[:signal.index+1])
+        
+        if filter_mode == 'with_trend':
+            # Only take signals that align with trend
+            if signal.signal_type == 'buy' and trend != 'bearish':
+                filtered.append(signal)
+            elif signal.signal_type == 'sell' and trend != 'bullish':
+                filtered.append(signal)
+        elif filter_mode == 'counter_trend':
+            # Only take mean-reversion signals
+            if signal.signal_type == 'buy' and trend == 'bearish':
+                filtered.append(signal)
+            elif signal.signal_type == 'sell' and trend == 'bullish':
+                filtered.append(signal)
+    
+    return filtered
+```
+
+---
+
+### 5. **Position sizing doesn't account for capital**
+
+**Location:** `backtest_options_signals()` line ~970
+
+**Problem:** Uses fixed `contracts_per_trade` regardless of capital or option price, leading to either oversized positions or insufficient capital errors.
+
+**Fix:**
+```python
+def calculate_contracts(capital: float, option_price: float, 
+                        max_risk_percent: float = 10.0,
+                        min_contracts: int = 1,
+                        max_contracts: int = 10) -> int:
+    """
+    Calculate optimal number of contracts based on available capital.
+    
+    Parameters:
+    -----------
+    capital : float
+        Available capital
+    option_price : float
+        Price per share (will be multiplied by 100 for contract)
+    max_risk_percent : float
+        Maximum percentage of capital to risk per trade
+    min_contracts : int
+        Minimum contracts (0 if can't afford)
+    max_contracts : int
+        Maximum contracts regardless of capital
+    
+    Returns:
+    --------
+    int : Number of contracts to buy
+    """
+    cost_per_contract = option_price * 100
+    max_capital_to_use = capital * (max_risk_percent / 100)
+    
+    if cost_per_contract > capital:
+        return 0  # Can't afford even one contract
+    
+    affordable_contracts = int(max_capital_to_use // cost_per_contract)
+    
+    return max(min_contracts if affordable_contracts > 0 else 0, 
+               min(affordable_contracts, max_contracts))
+```
+
+---
+
+### 6. **Missing validation in `get_option_strike_price()`**
+
+**Location:** Lines 694-739
+
+**Problem:** The function can return strikes that don't exist in the options chain (e.g., $123.50 strike for a stock that only has $5 increments).
+
+**Fix:** Add validation for realistic strike availability:
+```python
+def get_option_strike_price(stock_price: float, option_type: str,
+                            otm_percent: float = 2.0,
+                            available_strikes: List[float] = None) -> float:
+    """
+    Calculate an appropriate strike price for an option.
+    
+    Parameters:
+    -----------
+    available_strikes : List[float], optional
+        If provided, will select the closest available strike
+    """
+    if option_type == 'call':
+        strike = stock_price * (1 + otm_percent / 100)
+    else:
+        strike = stock_price * (1 - otm_percent / 100)
+
+    # Determine rounding increment based on stock price
+    if stock_price < 25:
+        increment = 0.50
+    elif stock_price < 200:
+        increment = 1.00
+    elif stock_price < 500:
+        increment = 2.50
+    else:
+        increment = 5.00
+
+    rounded_strike = round(strike / increment) * increment
+
+    # If available strikes provided, find closest
+    if available_strikes:
+        closest = min(available_strikes, key=lambda x: abs(x - rounded_strike))
+        return closest
+
+    return rounded_strike
+```
+
+---
+
+### 7. **`backtest_signals()` (stock backtest) has look-ahead bias**
+
+**Location:** Lines 351-407
+
+**Problem:** The stock backtesting function uses the final signal price for calculating final portfolio value, but the signal list might not include the last trading day.
+
+**Fix:**
+```python
+def backtest_signals(signals: List[SignalPoint],
+                     prices: np.ndarray,  # Add prices array
+                     initial_capital: float = 10000.0,
+                     shares_per_trade: Optional[int] = None) -> Dict:
+    # ... existing code ...
+    
+    # Calculate final portfolio value using LAST KNOWN PRICE, not last signal
+    final_price = prices[-1] if len(prices) > 0 else (signals[-1].price if signals else 0)
+    final_value = capital + (shares * final_price)
+    
+    # ... rest of function
+```
+
+---
+
+### 8. **No commission/slippage modeling**
+
+**Location:** `backtest_options_signals()`
+
+**Problem:** Real trading has costs that can significantly impact returns, especially for frequent trading.
+
+**Fix:**
+```python
+def backtest_options_signals(ticker: str,
+                             signals: List[SignalPoint],
+                             analysis: FourierAnalysis,
+                             # ... existing params ...
+                             commission_per_contract: float = 0.65,  # Typical options commission
+                             slippage_percent: float = 1.0,  # 1% slippage on entry/exit
+                             verbose: bool = True) -> OptionsBacktestResults:
+    
+    # ... in the order execution code ...
+    
+    # Apply slippage to entry price
+    if option_type == 'call' or option_type == 'put':
+        # Buy orders: pay slightly more due to slippage
+        entry_option_price = entry_option_price * (1 + slippage_percent / 100)
+    
+    # Calculate cost with commission
+    cost = (entry_option_price * 100 * contracts_per_trade) + (commission_per_contract * contracts_per_trade)
+    
+    # ... when closing positions ...
+    
+    # Sell orders: receive slightly less due to slippage
+    exit_price_after_slippage = current_option_price * (1 - slippage_percent / 100)
+    revenue = (exit_price_after_slippage * 100 * contracts_per_trade) - (commission_per_contract * contracts_per_trade)
+    capital += revenue
+```
+
+---
+
+### 9. **`run_fourier_options_backtest()` missing key metrics**
+
+**Location:** Lines 1182-1268
+
+**Problem:** The function doesn't calculate important metrics like Sharpe ratio, max drawdown, profit factor, etc.
+
+**Fix:** Add comprehensive metrics:
+```python
+def calculate_advanced_metrics(results: dict) -> dict:
+    """Calculate advanced performance metrics."""
+    trades = results['trades']
+    capital_history = results['capital_history']
+    
+    if not trades:
+        return {
+            'sharpe_ratio': 0,
+            'max_drawdown_percent': 0,
+            'profit_factor': 0,
+            'avg_winner': 0,
+            'avg_loser': 0,
+            'largest_winner': 0,
+            'largest_loser': 0,
+            'consecutive_wins': 0,
+            'consecutive_losses': 0,
+            'expectancy': 0
+        }
+    
+    # Separate winners and losers
+    winners = [t['pnl_dollar'] for t in trades if t['pnl_dollar'] and t['pnl_dollar'] > 0]
+    losers = [t['pnl_dollar'] for t in trades if t['pnl_dollar'] and t['pnl_dollar'] <= 0]
+    
+    # Basic stats
+    avg_winner = np.mean(winners) if winners else 0
+    avg_loser = np.mean(losers) if losers else 0
+    largest_winner = max(winners) if winners else 0
+    largest_loser = min(losers) if losers else 0
+    
+    # Profit factor
+    gross_profit = sum(winners) if winners else 0
+    gross_loss = abs(sum(losers)) if losers else 1  # Avoid division by zero
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    
+    # Max drawdown
+    equity_curve = [h['capital'] for h in capital_history]
+    if equity_curve:
+        peak = equity_curve[0]
+        max_dd = 0
+        for val in equity_curve:
+            peak = max(peak, val)
+            dd = (peak - val) / peak * 100
+            max_dd = max(max_dd, dd)
+    else:
+        max_dd = 0
+    
+    # Consecutive wins/losses
+    max_consec_wins = 0
+    max_consec_losses = 0
+    current_streak = 0
+    last_was_win = None
+    
+    for t in trades:
+        if t['pnl_dollar'] and t['pnl_dollar'] > 0:
+            if last_was_win:
+                current_streak += 1
+            else:
+                current_streak = 1
+            last_was_win = True
+            max_consec_wins = max(max_consec_wins, current_streak)
+        else:
+            if not last_was_win and last_was_win is not None:
+                current_streak += 1
+            else:
+                current_streak = 1
+            last_was_win = False
+            max_consec_losses = max(max_consec_losses, current_streak)
+    
+    # Expectancy (expected value per trade)
+    win_rate = len(winners) / len(trades) if trades else 0
+    loss_rate = 1 - win_rate
+    expectancy = (win_rate * avg_winner) + (loss_rate * avg_loser)
+    
+    # Sharpe ratio (simplified - using trade returns)
+    returns = [t['pnl_percent'] for t in trades if t['pnl_percent'] is not None]
+    if returns and np.std(returns) > 0:
+        sharpe = np.mean(returns) / np.std(returns) * np.sqrt(252 / np.mean([t['days_held'] or 1 for t in trades]))
+    else:
+        sharpe = 0
+    
+    return {
+        'sharpe_ratio': sharpe,
+        'max_drawdown_percent': max_dd,
+        'profit_factor': profit_factor,
+        'avg_winner': avg_winner,
+        'avg_loser': avg_loser,
+        'largest_winner': largest_winner,
+        'largest_loser': largest_loser,
+        'consecutive_wins': max_consec_wins,
+        'consecutive_losses': max_consec_losses,
+        'expectancy': expectancy,
+        'gross_profit': gross_profit,
+        'gross_loss': gross_loss
+    }
+```
+
+---
+
+### 10. **Signal cooldown to prevent overtrading**
+
+**Location:** `backtest_options_signals()`
+
+**Problem:** Signals can cluster together, causing multiple positions to open on consecutive days.
+
+**Fix:**
+```python
+def backtest_options_signals(ticker: str,
+                             signals: List[SignalPoint],
+                             # ... existing params ...
+                             min_days_between_trades: int = 3,  # New parameter
+                             verbose: bool = True) -> OptionsBacktestResults:
+    
+    # ... in the signal processing loop ...
+    
+    last_trade_date = None
+    
+    # Check if enough time has passed since last trade
+    if last_trade_date is not None:
+        days_since_last = (current_date - last_trade_date).days
+        if days_since_last < min_days_between_trades:
+            if verbose:
+                print(f"[{current_date.strftime('%Y-%m-%d')}] SKIPPED: Cooldown period "
+                      f"({days_since_last}/{min_days_between_trades} days)")
+            continue
+    
+    # ... after successfully opening a position ...
+    last_trade_date = current_date
+```
+
+---
+
+## Summary Table
+
+| # | Issue | Severity | Location |
+|---|-------|----------|----------|
+| 1 | Expiration dates wrong | **Critical** | `get_option_expiration()` |
+| 2 | No expiration monitoring in loop | **Critical** | `backtest_options_signals()` |
+| 3 | Signal detection direction | **High** | `detect_overbought_oversold()` |
+| 4 | No trend filtering | **High** | New function needed |
+| 5 | Fixed position sizing | **High** | `backtest_options_signals()` |
+| 6 | Strike price validation | **Medium** | `get_option_strike_price()` |
+| 7 | Look-ahead bias in stock backtest | **Medium** | `backtest_signals()` |
+| 8 | No commission/slippage | **Medium** | `backtest_options_signals()` |
+| 9 | Missing performance metrics | **Medium** | `run_fourier_options_backtest()` |
+| 10 | No trade cooldown | **Low** | `backtest_options_signals()` |
+
+---
+
+Fix all these issues in @fourier.py.

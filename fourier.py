@@ -933,7 +933,8 @@ class OptionsBacktestResults:
 def get_option_strike_price(stock_price: float, option_type: str,
                             otm_percent: float = 2.0) -> float:
     """
-    Calculate an appropriate strike price for an option.
+    Calculate an appropriate strike price for an option, rounded to match
+    typical option strike spacing.
 
     Parameters:
     -----------
@@ -947,7 +948,11 @@ def get_option_strike_price(stock_price: float, option_type: str,
     Returns:
     --------
     float
-        Strike price rounded to nearest dollar
+        Strike price rounded to typical option strike increments:
+        - $0.50 increments for stocks under $25
+        - $1.00 increments for stocks $25-$200
+        - $2.50 increments for stocks $200-$500
+        - $5.00 increments for stocks over $500
     """
     if option_type == 'call':
         # For calls, strike above current price
@@ -956,13 +961,30 @@ def get_option_strike_price(stock_price: float, option_type: str,
         # For puts, strike below current price
         strike = stock_price * (1 - otm_percent / 100)
 
-    # Round to nearest dollar
-    return round(strike)
+    # Determine rounding increment based on stock price
+    # These are typical market conventions for strike spacing
+    if stock_price < 25:
+        increment = 0.50
+    elif stock_price < 200:
+        increment = 1.00
+    elif stock_price < 500:
+        increment = 2.50
+    else:
+        increment = 5.00
+
+    # Round to nearest increment
+    rounded_strike = round(strike / increment) * increment
+
+    return rounded_strike
 
 
 def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, ticker: str = None) -> str:
     """
-    Get the closest available option expiration date.
+    Get the option expiration date approximately days_to_expiry days from current_date.
+
+    For historical backtesting/replay, this calculates the next Friday that's closest
+    to the target expiration date. This approximates the standard weekly/monthly option
+    expiration pattern without relying on current live expiration dates.
 
     Parameters:
     -----------
@@ -971,8 +993,8 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
     days_to_expiry : int
         Target days until expiration (default: 30)
     ticker : str, optional
-        Stock ticker symbol. If provided, returns actual available expiration.
-        If None, returns calculated date (may not be a valid expiration).
+        Stock ticker symbol. Currently unused - kept for backward compatibility.
+        In historical replay, we calculate expiration dates rather than querying live data.
 
     Returns:
     --------
@@ -981,7 +1003,6 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
     """
     from datetime import timedelta, datetime as dt
     import pandas as pd
-    import yfinance as yf
 
     # Convert numpy.datetime64 to Python datetime if needed
     if isinstance(current_date, pd.Timestamp) or hasattr(current_date, 'to_pydatetime'):
@@ -993,39 +1014,17 @@ def get_option_expiration(current_date: datetime, days_to_expiry: int = 30, tick
     # Calculate target expiration date
     target_expiration = current_date + timedelta(days=days_to_expiry)
 
-    # If ticker provided, find closest actual expiration
-    if ticker:
-        try:
-            ticker_obj = yf.Ticker(ticker)
-            available_expirations = ticker_obj.options
+    # Find the next Friday (options typically expire on Fridays)
+    # weekday(): Monday=0, Tuesday=1, ..., Friday=4, Saturday=5, Sunday=6
+    days_until_friday = (4 - target_expiration.weekday()) % 7
 
-            if not available_expirations:
-                # No options available, return calculated date
-                return target_expiration.strftime('%Y-%m-%d')
+    # If target is already a Friday, use it; otherwise find next Friday
+    if days_until_friday == 0 and target_expiration.weekday() != 4:
+        days_until_friday = 7
 
-            # Convert available expirations to datetime objects
-            expiration_dates = [dt.strptime(exp, '%Y-%m-%d') for exp in available_expirations]
+    expiration = target_expiration + timedelta(days=days_until_friday)
 
-            # Find the closest expiration to our target that is >= current_date
-            future_expirations = [exp for exp in expiration_dates if exp > current_date]
-
-            if not future_expirations:
-                # No future expirations available
-                return target_expiration.strftime('%Y-%m-%d')
-
-            # Find closest to target
-            closest_expiration = min(future_expirations,
-                                    key=lambda x: abs((x - target_expiration).days))
-
-            return closest_expiration.strftime('%Y-%m-%d')
-
-        except Exception as e:
-            # If there's any error fetching options, return calculated date
-            print(f"  Warning: Could not fetch available expirations: {e}")
-            return target_expiration.strftime('%Y-%m-%d')
-
-    # No ticker provided, return calculated date
-    return target_expiration.strftime('%Y-%m-%d')
+    return expiration.strftime('%Y-%m-%d')
 
 
 def backtest_options_signals(ticker: str,

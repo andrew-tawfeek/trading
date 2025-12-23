@@ -615,29 +615,46 @@ def greeks(ticker_symbol, strike_date, strike_price, option_type, status = False
 def option_price(ticker_symbol, strike_date, strike_price, option_type):
     """
     Get the current price of an option.
-    
+
     Args:
         ticker_symbol: Stock ticker (e.g., 'AAPL')
         strike_date: Expiration date in 'YYYY-MM-DD' format
         strike_price: Strike price (e.g., 150.0)
         option_type: 'call' or 'put'
-    
+
     Returns:
-        dict with bid, ask, lastPrice, and volume
+        dict with bid, ask, lastPrice, volume, and actualStrike (the actual strike used)
     """
     ticker = yf.Ticker(ticker_symbol)
     chain = ticker.option_chain(strike_date)
-    
+
     if option_type == 'put':
-        option = chain.puts[chain.puts['strike'] == strike_price].iloc[0]
+        options_df = chain.puts
     elif option_type == 'call':
-        option = chain.calls[chain.calls['strike'] == strike_price].iloc[0]
-    
+        options_df = chain.calls
+    else:
+        raise ValueError("option_type must be 'call' or 'put'")
+
+    # Try exact match first
+    exact_match = options_df[options_df['strike'] == strike_price]
+
+    if len(exact_match) > 0:
+        option = exact_match.iloc[0]
+        actual_strike = strike_price
+    else:
+        # Find nearest strike price
+        options_df['strike_diff'] = abs(options_df['strike'] - strike_price)
+        nearest_idx = options_df['strike_diff'].idxmin()
+        option = options_df.loc[nearest_idx]
+        actual_strike = float(option['strike'])
+        print(f"  Note: Exact strike ${strike_price:.2f} not available, using nearest strike ${actual_strike:.2f}")
+
     return {
         'lastPrice': float(option['lastPrice']),
         'bid': float(option['bid']),
         'ask': float(option['ask']),
-        'volume': int(option['volume'])
+        'volume': int(option['volume']),
+        'actualStrike': actual_strike
     }
 
 

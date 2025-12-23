@@ -11,7 +11,8 @@
       "Bash(timeout 30 python:*)",
       "Bash(timeout 15 python:*)",
       "Bash(timeout 60 python:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python3:*)"
     ]
   }
 }

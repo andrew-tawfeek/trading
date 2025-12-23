@@ -32,6 +32,10 @@ import json
 import os
 import sys
 from zoneinfo import ZoneInfo
+import holidays
+
+# NYSE holidays calendar
+US_HOLIDAYS = holidays.US()
 
 # Import from LiveFourier
 from LiveFourier import LiveFourierMonitor, live_fourier_monitor
@@ -134,7 +138,7 @@ class LiveOptionsModel:
         print(f"{'='*80}\n")
 
     def is_market_open(self) -> bool:
-        """Check if market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)"""
+        """Check if market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri, excluding holidays)"""
         # Get current time in Eastern Time
         et_tz = ZoneInfo('America/New_York')
         now_et = datetime.now(et_tz)
@@ -143,7 +147,11 @@ class LiveOptionsModel:
         if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
             return False
 
-        # Check market hours (simplified - doesn't account for holidays)
+        # Check if holiday
+        if now_et.date() in US_HOLIDAYS:
+            return False
+
+        # Check market hours
         market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
         market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
 
@@ -182,7 +190,20 @@ class LiveOptionsModel:
         try:
             # Get option price
             option_data = option_price(self.ticker, expiration_date, strike_price, option_type)
-            entry_price = option_data['lastPrice']
+
+            # Get entry price with fallback to bid/ask midpoint
+            entry_price = option_data.get('lastPrice')
+            if entry_price is None or entry_price == 0:
+                bid = option_data.get('bid', 0)
+                ask = option_data.get('ask', 0)
+                if bid > 0 and ask > 0:
+                    entry_price = (bid + ask) / 2
+                else:
+                    print(f"  Warning: No valid option price found (lastPrice, bid, ask all invalid)")
+                    return
+
+            # Use actual strike price from option_data (may differ from requested strike)
+            actual_strike = option_data.get('actualStrike', strike_price)
 
             # Calculate cost
             cost = entry_price * 100 * self.contracts_per_trade
@@ -195,8 +216,12 @@ class LiveOptionsModel:
 
             # Get Greeks at entry
             try:
-                greeks_data = greeks(self.ticker, expiration_date, strike_price, option_type,
+                greeks_data = greeks(self.ticker, expiration_date, actual_strike, option_type,
                                     status=False, silent=True)
+                # Validate Greeks result
+                if isinstance(greeks_data, str):  # Error message
+                    print(f"  Warning: Greeks calculation returned: {greeks_data}")
+                    greeks_data = None
             except Exception as e:
                 print(f"  Warning: Could not calculate Greeks: {e}")
                 greeks_data = None
@@ -205,7 +230,7 @@ class LiveOptionsModel:
             position = SimulatedPosition(
                 entry_date=current_time,
                 option_type=option_type,
-                strike_price=strike_price,
+                strike_price=actual_strike,
                 expiration_date=expiration_date,
                 entry_price=entry_price,
                 contracts=self.contracts_per_trade,
@@ -224,14 +249,14 @@ class LiveOptionsModel:
             print(f"{'='*80}")
             print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"Stock Price: ${current_price:.2f}")
-            print(f"Strike: ${strike_price:.2f}")
+            print(f"Strike: ${actual_strike:.2f}")
             print(f"Expiration: {expiration_date}")
             print(f"Entry Price: ${entry_price:.2f}")
             print(f"Contracts: {self.contracts_per_trade}")
             print(f"Cost: ${cost:.2f}")
             print(f"Remaining Capital: ${self.capital:,.2f}")
 
-            if greeks_data:
+            if greeks_data and isinstance(greeks_data, dict):
                 print(f"\nGreeks at Entry:")
                 print(f"  Delta: {greeks_data['delta']:>8.4f}")
                 print(f"  Gamma: {greeks_data['gamma']:>8.4f}")
@@ -254,7 +279,17 @@ class LiveOptionsModel:
                 # Get current option price
                 option_data = option_price(self.ticker, position.expiration_date,
                                           position.strike_price, position.option_type)
-                current_price = option_data['lastPrice']
+
+                # Get current price with fallback
+                current_price = option_data.get('lastPrice')
+                if current_price is None or current_price == 0:
+                    bid = option_data.get('bid', 0)
+                    ask = option_data.get('ask', 0)
+                    if bid > 0 and ask > 0:
+                        current_price = (bid + ask) / 2
+                    else:
+                        print(f"  Warning: Could not get price for {position.option_type} ${position.strike_price}")
+                        continue
 
                 # Calculate P&L
                 pnl_percent = ((current_price - position.entry_price) / position.entry_price) * 100
@@ -307,8 +342,8 @@ class LiveOptionsModel:
                     print(f"Capital: ${self.capital:,.2f}")
                     print(f"{'='*80}\n")
 
-                # Check expiration (within 1 day)
-                elif (position.strike_date_obj - current_time).days <= 0:
+                # Check expiration (close 2 days before to avoid assignment risk)
+                elif (position.strike_date_obj - current_time).days <= 2:
                     revenue = current_price * 100 * position.contracts
                     self.capital += revenue
 
@@ -331,6 +366,8 @@ class LiveOptionsModel:
                     print(f"Capital: ${self.capital:,.2f}")
                     print(f"{'='*80}\n")
 
+            except KeyboardInterrupt:
+                raise
             except Exception as e:
                 print(f"  Warning: Could not check position {position.option_type} ${position.strike_price}: {e}")
                 continue
@@ -351,11 +388,22 @@ class LiveOptionsModel:
             try:
                 option_data = option_price(self.ticker, position.expiration_date,
                                           position.strike_price, position.option_type)
-                current_price = option_data['lastPrice']
+                current_price = option_data.get('lastPrice')
+                if current_price is None or current_price == 0:
+                    bid = option_data.get('bid', 0)
+                    ask = option_data.get('ask', 0)
+                    if bid > 0 and ask > 0:
+                        current_price = (bid + ask) / 2
+                    else:
+                        # Mark position value as unknown
+                        current_price = position.entry_price
+
                 position_value = current_price * 100 * position.contracts
                 portfolio_value += position_value
-            except:
-                # If can't get price, use entry price
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                # If can't get price, use entry price as estimate
                 portfolio_value += position.cost
 
         total_return = ((portfolio_value - self.initial_capital) / self.initial_capital) * 100
@@ -372,11 +420,21 @@ class LiveOptionsModel:
                 try:
                     option_data = option_price(self.ticker, pos.expiration_date,
                                               pos.strike_price, pos.option_type)
-                    current_price = option_data['lastPrice']
+                    current_price = option_data.get('lastPrice')
+                    if current_price is None or current_price == 0:
+                        bid = option_data.get('bid', 0)
+                        ask = option_data.get('ask', 0)
+                        if bid > 0 and ask > 0:
+                            current_price = (bid + ask) / 2
+                        else:
+                            raise ValueError("No valid price")
+
                     pnl = ((current_price - pos.entry_price) / pos.entry_price) * 100
                     print(f"    {i}. {pos.option_type.upper()} ${pos.strike_price} exp {pos.expiration_date}: "
                           f"${current_price:.2f} ({pnl:+.1f}%)")
-                except:
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
                     print(f"    {i}. {pos.option_type.upper()} ${pos.strike_price} exp {pos.expiration_date}: "
                           f"(price unavailable)")
         print()
@@ -436,7 +494,11 @@ class LiveOptionsModel:
                 # Only trade and monitor when market is open
                 if market_is_open:
                     # Run single Fourier update (this will trigger callback if signal detected)
-                    monitor.run_single_update()
+                    try:
+                        monitor.run_single_update()
+                    except Exception as e:
+                        print(f"  Warning: Fourier update failed: {e}")
+                        # Continue anyway - don't crash the entire model
 
                     # Check existing positions
                     if self.open_positions:
