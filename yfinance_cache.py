@@ -159,7 +159,7 @@ class YFinanceCache:
         try:
             with open(cache_file, 'wb') as f:
                 pickle.dump(data, f)
-            print(f"[CACHE SAVED] Cached {ticker} data for future use")
+            #print(f"[CACHE SAVED] Cached {ticker} data for future use")
         except Exception as e:
             print(f"[CACHE ERROR] Failed to save cache: {e}")
 
@@ -205,7 +205,7 @@ class YFinanceCache:
             return cached_data
 
         # Cache miss - download from YFinance
-        print(f"[CACHE MISS] Downloading {ticker} data from {start} to {end}...")
+        #print(f"[CACHE MISS] Downloading {ticker} data from {start} to {end}...")
         data = yf.download(
             ticker,
             start=start,
