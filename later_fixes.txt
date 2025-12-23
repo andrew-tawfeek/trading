@@ -1,6 +1,368 @@
-Looking at `fourier.py` in detail, here are the issues and recommended fixes:
+STATUS UPDATE: Fixes for fourier.py
+===============================================
+Last Updated: December 23, 2025
+
+COMPLETED FIXES:
+✅ Issue 1: get_option_expiration() - FIXED
+✅ Issue 2: Expiration monitoring in backtest loop - FIXED  
+✅ Issue 3: Signal detection improvements - FIXED
+✅ Issue 4: Trend filtering functions - FIXED
+✅ Issue 5: Dynamic position sizing function - FIXED
+✅ Issue 6: Strike price validation - FIXED
+✅ Issue 7: Look-ahead bias in backtest_signals - FIXED
+✅ Issue 8: Commission/slippage parameters added - PARTIALLY FIXED
+
+REMAINING WORK (3 items):
+❌ Issue 8b: Implement commission/slippage logic in backtest loop
+❌ Issue 9: Add advanced performance metrics
+❌ Issue 10: Implement trade cooldown logic in backtest loop
 
 ---
+
+## REMAINING ENHANCEMENTS TO IMPLEMENT
+
+### Enhancement 1: Commission and Slippage Application in Backtest Loop
+
+**STATUS:** Parameters added to function signature, but logic NOT implemented in loop
+
+**Location:** `fourier.py`, inside `backtest_options_signals()` function
+- Entry logic: Around line 1340-1370 (where positions are opened)
+- Exit logic: Around line 1415-1520 (where positions are closed)
+
+**What to do:**
+
+1. **When OPENING positions** (around where `cost = entry_option_price * 100 * contracts_per_trade`):
+```python
+# FIND THIS SECTION (around line 1360):
+cost = entry_option_price * 100 * contracts_per_trade
+
+# REPLACE WITH:
+# Apply slippage to entry (buy orders pay more)
+entry_with_slippage = entry_option_price * (1 + slippage_percent / 100)
+
+# Calculate cost with commission
+cost = (entry_with_slippage * 100 * contracts_per_trade) + (commission_per_contract * contracts_per_trade)
+
+# ALSO UPDATE the position object creation to use entry_with_slippage:
+pos = OptionPosition(
+    # ... existing fields ...
+    entry_price=entry_with_slippage,  # NOT entry_option_price
+    # ... rest of fields ...
+)
+```
+
+2. **When CLOSING positions** (in all exit paths: stop-loss, take-profit, expiration, signal reversal):
+```python
+# FIND THIS PATTERN (appears 4 times around lines 1415, 1465, 1405, 1520):
+capital += current_option_price * 100 * contracts_per_trade
+
+# REPLACE WITH:
+# Apply slippage to exit (sell orders receive less)
+exit_with_slippage = current_option_price * (1 - slippage_percent / 100)
+
+# Calculate revenue with commission
+revenue = (exit_with_slippage * 100 * contracts_per_trade) - (commission_per_contract * contracts_per_trade)
+capital += revenue
+
+# ALSO UPDATE P&L calculations to use the actual slippage prices
+```
+
+**Why this matters:** Without commission/slippage, backtests are unrealistically optimistic. A strategy with 100 trades at $0.65/contract = $65 in commissions alone.
+
+---
+
+### Enhancement 2: Advanced Performance Metrics
+
+**STATUS:** Not implemented
+
+**Location:** Create new function in `fourier.py` around line 1650 (after `backtest_options_signals()`)
+
+**What to do:**
+
+Add this complete function:
+
+```python
+def calculate_advanced_metrics(closed_positions: List, initial_capital: float) -> Dict:
+    """
+    Calculate advanced performance metrics for options backtest.
+    
+    Parameters:
+    -----------
+    closed_positions : List[OptionPosition]
+        List of closed positions from backtest
+    initial_capital : float
+        Starting capital
+    
+    Returns:
+    --------
+    Dict
+        Dictionary of advanced metrics
+    """
+    import numpy as np
+    
+    if not closed_positions:
+        return {
+            'sharpe_ratio': 0.0,
+            'max_drawdown_percent': 0.0,
+            'max_drawdown_duration_days': 0,
+            'profit_factor': 0.0,
+            'avg_winner': 0.0,
+            'avg_loser': 0.0,
+            'largest_winner': 0.0,
+            'largest_loser': 0.0,
+            'consecutive_wins': 0,
+            'consecutive_losses': 0,
+            'expectancy': 0.0,
+            'gross_profit': 0.0,
+            'gross_loss': 0.0,
+            'recovery_factor': 0.0,
+            'avg_days_in_trade': 0.0
+        }
+    
+    # Separate winners and losers
+    winners = [p.pnl_dollar for p in closed_positions if p.pnl_dollar and p.pnl_dollar > 0]
+    losers = [p.pnl_dollar for p in closed_positions if p.pnl_dollar and p.pnl_dollar <= 0]
+    
+    # Basic statistics
+    avg_winner = np.mean(winners) if winners else 0.0
+    avg_loser = np.mean(losers) if losers else 0.0
+    largest_winner = max(winners) if winners else 0.0
+    largest_loser = min(losers) if losers else 0.0
+    
+    # Profit factor
+    gross_profit = sum(winners) if winners else 0.0
+    gross_loss = abs(sum(losers)) if losers else 1.0
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    
+    # Build equity curve
+    equity_curve = [initial_capital]
+    for pos in sorted(closed_positions, key=lambda p: p.exit_date):
+        if pos.pnl_dollar:
+            equity_curve.append(equity_curve[-1] + pos.pnl_dollar)
+    
+    # Max drawdown
+    peak = equity_curve[0]
+    max_dd = 0.0
+    max_dd_duration = 0
+    dd_start_idx = 0
+    current_dd_duration = 0
+    
+    for idx, val in enumerate(equity_curve):
+        if val > peak:
+            peak = val
+            dd_start_idx = idx
+            current_dd_duration = 0
+        else:
+            current_dd_duration = idx - dd_start_idx
+            dd = (peak - val) / peak * 100 if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+                max_dd_duration = current_dd_duration
+    
+    # Consecutive wins/losses
+    max_consec_wins = 0
+    max_consec_losses = 0
+    current_streak = 0
+    last_was_win = None
+    
+    for pos in sorted(closed_positions, key=lambda p: p.exit_date):
+        is_win = pos.pnl_dollar and pos.pnl_dollar > 0
+        
+        if is_win:
+            if last_was_win:
+                current_streak += 1
+            else:
+                current_streak = 1
+            last_was_win = True
+            max_consec_wins = max(max_consec_wins, current_streak)
+        else:
+            if last_was_win is False:
+                current_streak += 1
+            else:
+                current_streak = 1
+            last_was_win = False
+            max_consec_losses = max(max_consec_losses, current_streak)
+    
+    # Expectancy
+    win_rate = len(winners) / len(closed_positions)
+    loss_rate = 1 - win_rate
+    expectancy = (win_rate * avg_winner) + (loss_rate * avg_loser)
+    
+    # Sharpe ratio (annualized)
+    returns = [p.pnl_dollar / initial_capital * 100 for p in closed_positions if p.pnl_dollar is not None]
+    if returns and np.std(returns) > 0:
+        avg_days_held = np.mean([p.days_held for p in closed_positions if p.days_held])
+        trades_per_year = 252 / avg_days_held if avg_days_held > 0 else 0
+        sharpe = (np.mean(returns) / np.std(returns)) * np.sqrt(trades_per_year)
+    else:
+        sharpe = 0.0
+    
+    # Recovery factor
+    final_return = equity_curve[-1] - initial_capital
+    recovery_factor = final_return / (initial_capital * max_dd / 100) if max_dd > 0 else 0.0
+    
+    # Average days in trade
+    avg_days_in_trade = np.mean([p.days_held for p in closed_positions if p.days_held is not None])
+    
+    return {
+        'sharpe_ratio': sharpe,
+        'max_drawdown_percent': max_dd,
+        'max_drawdown_duration_days': max_dd_duration,
+        'profit_factor': profit_factor,
+        'avg_winner': avg_winner,
+        'avg_loser': avg_loser,
+        'largest_winner': largest_winner,
+        'largest_loser': largest_loser,
+        'consecutive_wins': max_consec_wins,
+        'consecutive_losses': max_consec_losses,
+        'expectancy': expectancy,
+        'gross_profit': gross_profit,
+        'gross_loss': gross_loss,
+        'recovery_factor': recovery_factor,
+        'avg_days_in_trade': avg_days_in_trade
+    }
+```
+
+Then **UPDATE** `backtest_options_signals()` return statement (around line 1600):
+
+```python
+# FIND (near end of function):
+return OptionsBacktestResults(
+    ticker=ticker,
+    initial_capital=initial_capital,
+    final_capital=capital,
+    # ... existing fields ...
+)
+
+# ADD before the return:
+advanced_metrics = calculate_advanced_metrics(closed_positions, initial_capital)
+
+# THEN update the return to include metrics:
+return OptionsBacktestResults(
+    ticker=ticker,
+    initial_capital=initial_capital,
+    final_capital=capital,
+    # ... existing fields ...
+    advanced_metrics=advanced_metrics  # ADD THIS
+)
+```
+
+**Also UPDATE** the `OptionsBacktestResults` dataclass (around line 1070) to include:
+```python
+@dataclass
+class OptionsBacktestResults:
+    # ... existing fields ...
+    advanced_metrics: Optional[Dict] = None  # ADD THIS LINE
+```
+
+**Why this matters:** Professional backtests need Sharpe ratio, max drawdown, profit factor, etc. These are industry-standard metrics.
+
+---
+
+### Enhancement 3: Trade Cooldown Logic
+
+**STATUS:** Parameter added (`min_days_between_trades`) but NOT used in loop
+
+**Location:** `fourier.py`, `backtest_options_signals()` function around line 1340 (where new positions are opened)
+
+**What to do:**
+
+1. **Add tracking variable** at the start of the function (around line 1320):
+```python
+# FIND THIS SECTION (after initializing capital, open_positions, etc.):
+capital = initial_capital
+open_positions = []
+closed_positions = []
+
+# ADD THIS:
+last_trade_date = None  # Track when we last opened a position
+```
+
+2. **Add cooldown check** BEFORE opening new positions (around line 1340):
+```python
+# FIND THIS SECTION (where we check if we can open new position):
+if len(open_positions) >= max_positions:
+    continue
+
+# ADD AFTER THAT CHECK:
+# Check cooldown period
+if last_trade_date is not None:
+    days_since_last = (current_date.date() - last_trade_date.date()).days
+    if days_since_last < min_days_between_trades:
+        if verbose:
+            print(f"[{current_date.strftime('%Y-%m-%d')}] SKIPPED: Cooldown active "
+                  f"({days_since_last}/{min_days_between_trades} days since last trade)")
+        continue
+```
+
+3. **Update last_trade_date** AFTER successfully opening a position (around line 1370):
+```python
+# FIND THIS SECTION (after position is added to open_positions):
+open_positions.append(pos)
+capital -= cost
+
+# ADD AFTER:
+last_trade_date = current_date  # Update for cooldown tracking
+```
+
+**Why this matters:** Prevents overtrading on clustered signals. If you get 3 signals in a row, you don't want to open 3 positions immediately - spread them out.
+
+---
+
+## IMPLEMENTATION CHECKLIST
+
+Use this checklist when implementing:
+
+### Enhancement 1: Commission/Slippage
+- [ ] Find entry cost calculation (line ~1360)
+- [ ] Add slippage to entry_option_price
+- [ ] Add commission to cost calculation
+- [ ] Update OptionPosition to use slippage-adjusted price
+- [ ] Find all 4 exit points (stop-loss, take-profit, expiration, reversal)
+- [ ] Add slippage to exit price at each exit point
+- [ ] Subtract commission from revenue at each exit point
+- [ ] Update P&L calculations to reflect actual fills
+- [ ] Test with commission=0.65, slippage=1.0
+
+### Enhancement 2: Advanced Metrics
+- [ ] Add calculate_advanced_metrics() function after backtest_options_signals()
+- [ ] Update OptionsBacktestResults dataclass to include advanced_metrics field
+- [ ] Call calculate_advanced_metrics() before return in backtest_options_signals()
+- [ ] Add advanced_metrics to return statement
+- [ ] Update print_options_backtest_summary() to display new metrics
+- [ ] Test that metrics calculate correctly
+
+### Enhancement 3: Trade Cooldown
+- [ ] Add last_trade_date = None at function start
+- [ ] Add cooldown check after max_positions check
+- [ ] Update last_trade_date after opening position
+- [ ] Test with min_days_between_trades=3
+- [ ] Verify cooldown prevents rapid consecutive trades
+
+---
+
+## TESTING RECOMMENDATIONS
+
+After implementing all 3 enhancements:
+
+1. Run backtest with these settings to verify:
+   - ticker: 'AAPL'
+   - commission_per_contract: 0.65
+   - slippage_percent: 1.0
+   - min_days_between_trades: 3
+
+2. Check output for:
+   - Commission costs reducing returns
+   - Slippage widening entry/exit prices
+   - Cooldown preventing consecutive trades
+   - Advanced metrics in summary
+
+3. Compare with/without these features to see impact
+
+---
+
+## Original Issue Documentation Below
+===============================================
 
 ## Critical Issues
 

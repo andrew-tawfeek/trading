@@ -579,6 +579,33 @@ class ReplayOptionsModel:
 
         for position in self.open_positions:
             try:
+                # Check if we're at or past expiration FIRST (before trying to price)
+                days_to_exp = (position.strike_date_obj.date() - current_date.date()).days
+                
+                if days_to_exp < 0:
+                    # Position has expired - close at worthless (or minimal value)
+                    print(f"  Warning: Position {position.option_type} ${position.strike_price} has EXPIRED (exp: {position.expiration_date})")
+                    # Option expired worthless
+                    revenue = 0.0  # Expired options are worth $0
+                    self.capital += revenue
+                    position.exit_date = current_date
+                    position.exit_price = 0.0
+                    position.exit_reason = 'expired_worthless'
+                    position.pnl_percent = -100.0
+                    position.pnl_dollar = revenue - position.cost
+                    positions_to_close.append(position)
+                    
+                    print(f"\n{'='*80}")
+                    print(f"OPTION EXPIRED WORTHLESS: {position.option_type.upper()}")
+                    print(f"{'='*80}")
+                    print(f"Time: {current_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"Strike: ${position.strike_price:.2f} exp {position.expiration_date}")
+                    print(f"Entry: ${position.entry_price:.2f} → Expired at $0.00")
+                    print(f"P&L: -100.0% (${position.pnl_dollar:.2f})")
+                    print(f"Capital: ${self.capital:,.2f}")
+                    print(f"{'='*80}\n")
+                    continue
+                
                 # Get current option price with retry logic
                 current_price = self.retry_api_call(
                     option_price_historical,
@@ -663,10 +690,8 @@ class ReplayOptionsModel:
                     print(f"{'='*80}\n")
 
                 # Check expiration (close 2 days before to avoid assignment risk)
-                # Ensure timezone-naive comparison using date objects
-                else:
-                    days_to_exp = (position.strike_date_obj.date() - current_date.date()).days
-                    if days_to_exp <= 2:
+                # Note: days_to_exp was already calculated above
+                elif days_to_exp <= 2:
                         revenue = current_price * 100 * position.contracts
                         self.capital += revenue
 
