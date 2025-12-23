@@ -628,10 +628,8 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
         # Update y-axes labels
         fig.update_yaxes(title_text="Price ($)", row=1, col=1)
         fig.update_yaxes(title_text="Deviation ($)", row=2, col=1)
-        # Update x-axes to remove market closed gaps
-        fig.update_xaxes(title_text="Date", row=2, col=1, rangebreaks=[
-            dict(bounds=["sat", "mon"]),  # Hide weekends
-        ])
+        # Update x-axes
+        fig.update_xaxes(title_text="Date", row=2, col=1)
         fig.update_xaxes(
             rangeselector=dict(
                 buttons=list([
@@ -642,9 +640,6 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
                     dict(step="all", label="All")
                 ])
             ),
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),  # Hide weekends
-            ],
             row=1, col=1
         )
     else:
@@ -667,9 +662,6 @@ def plot_stock(ticker: str, start_date: str, end_date: str, tick_size: str = '1d
                     ])
                 ),
                 rangeslider=dict(visible=True),
-                rangebreaks=[
-                    dict(bounds=["sat", "mon"]),  # Hide weekends
-                ],
                 type="date"
             )
         )
