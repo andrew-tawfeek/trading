@@ -11,8 +11,7 @@ def fourier_options_parameter_search(ticker: str,
                                      oversold_range: list = list(range(-10, -2)),
                                      otm_percent_options: list =[2.0, 5.0, 10.0],
                                      stoploss_options: list =[10, 20, 30, 40, 50],
-                                     takeprofit_options: list =[10, 20, 30, 40, 50],
-                                     ):
+                                     takeprofit_options: list =[10, 20, 30, 40, 50]):
 
     best_return = -100
     best_params = None
