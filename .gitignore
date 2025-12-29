@@ -83,3 +83,9 @@ desktop.ini
 *.tmp
 *.temp
 ~*
+
+
+# Misc
+.claude/
+.yfinance_cache
+__pycache__/
